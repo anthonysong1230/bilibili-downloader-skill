@@ -37,11 +37,11 @@ get_cookies() {
     local ck=""
     if [[ -s "$LOGINFILE" ]]; then
         ck="$LOGINFILE"
-        echo ">>> 使用登录 cookies (高清可用)"
+        echo ">>> 使用登录 cookies (高清可用)" >&2
     else
         # 生成 buvid (若没有)
         if [[ ! -s "$BUFILE" ]]; then
-            echo ">>> 获取 buvid cookie..."
+            echo ">>> 获取 buvid cookie..." >&2
             curl -s -c "$BUFILE" -A "$UA" "https://www.bilibili.com/" -o /dev/null
             chmod 600 "$BUFILE" 2>/dev/null || true
         fi
@@ -135,7 +135,7 @@ download_video() {
                     H264_ENC=h264_videotoolbox
                 fi
                 if [[ -n "$H264_ENC" ]]; then
-                    echo "    ⚠️ 视频流是 ${vcodec}, 用 ${H264_ENC} 转码为 H.264..."
+                    echo "    ⚠️ 视频流是 ${vcodec}, 尝试用 ${H264_ENC} 转码为 H.264..."
                     if [[ "$H264_ENC" == "libx264" ]]; then
                         "$FFMPEG" -y -i "$vfile" -i "$afile" \
                             -map 0:v:0 -map 1:a:0 \
@@ -146,6 +146,17 @@ download_video() {
                             -map 0:v:0 -map 1:a:0 \
                             -c:v h264_videotoolbox -b:v 1200k \
                             -c:a aac -b:a 96k -movflags +faststart "$out" 2>&1 | tail -3
+                    fi
+                    # 验证转码结果: 必须同时有视频+音频流, 否则回退copy
+                    local has_video
+                    has_video="$("$FFMPEG" -i "$out" 2>&1 | grep -c 'Video:')"
+                    if [[ "$has_video" -eq 0 || ! -s "$out" ]]; then
+                        echo "    ⚠️ ${H264_ENC} 转码失败(解码器不支持${vcodec}), 回退为原样复制..."
+                        rm -f "$out"
+                        "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                            -map 0:v:0 -map 1:a:0 \
+                            -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
+                        echo "    ⚠️ 结果是 ${vcodec} 编码, 需现代播放器(VLC/mpv)或装完整ffmpeg转H264。" >&2
                     fi
                 else
                     echo "    ⚠️ 无 H264 编码器, 原样复制 ${vcodec} 流。请装完整 ffmpeg。" >&2
