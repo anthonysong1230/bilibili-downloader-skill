@@ -114,7 +114,18 @@ bash scripts/bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 2
 bash scripts/bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 all
 ```
 
-### 5. 批量下载整个 UP 主空间
+### 5. 截取片段下载（音频/视频）
+
+```bash
+# 截取音频片段 1:30-2:45
+bash scripts/bilibili-dl.sh "BV1GJ411x7h7" audio ~/Downloads mp4 480 1 "1:30-2:45"
+# 截取视频片段 90s-165s
+bash scripts/bilibili-dl.sh "BV1GJ411x7h7" video ~/Downloads mp4 480 1 "90-165"
+```
+
+> 截取区间格式：`开始-结束`，支持 `分:秒`（`1:30-2:45`）或 `纯秒`（`90-165`）。⚠️ 不支持 `all` 模式。
+
+### 6. 批量下载整个 UP 主空间
 
 ```bash
 bash scripts/bilibili-dl.sh "https://space.bilibili.com/3546568888159133/video" list
@@ -127,7 +138,7 @@ bash scripts/bilibili-dl.sh "3546568888159133" list
 ## 📖 用法
 
 ```
-bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器] [分辨率] [分P号]
+bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器] [分辨率] [分P号] [截取区间]
 ```
 
 | 参数 | 说明 |
@@ -140,6 +151,7 @@ bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器] [分辨率
 | `[容器]` | 仅 video，`mp4`(默认) / `mkv`，可省略 |
 | `[分辨率]` | 默认 `480`；`720`/`1080` 需登录，可省略 |
 | `[分P号]` | 多P视频：P号 / `all` 全部 / 空=第1P，可省略 |
+| `[截取区间]` | 可选，片段截取，格式 `开始-结束`（如 `1:30-2:45` / `90-165`）；不支持 `all` |
 
 > 参数可省略：`bilibili-dl.sh "BVxxx"` 即可下载默认配置（音频、480P、第1P）。
 
