@@ -12,11 +12,37 @@ ERROR: [BiliBili] xxx: Unable to download JSON metadata: HTTP Error 412: Precond
 
 ---
 
+## 🔑 扫码登录（解锁 720P+/1080P 高清、充电/会员内容）
+
+游客模式只能下载 **360P/480P**。要高清画质，需登录你的 B站账号：
+
+```bash
+bash scripts/bilibili-login.sh
+```
+
+1. 脚本调用 B站官方 API 生成**登录二维码**
+2. 生成一个 HTML 页面（`~/bilibili-login-qr.html`），在浏览器打开
+3. 用 **B站 App** 扫码确认
+4. 成功后 cookies 自动保存，后续下载自动启用高清格式
+
+然后指定分辨率下载即可：
+
+```bash
+# 登录后下载 1080P 高清
+bash scripts/bilibili-dl.sh "https://www.bilibili.com/video/BVxxx" video ~/Downloads mp4 1080
+# 720P
+bash scripts/bilibili-dl.sh "BVxxx" video 480 720
+```
+
+> ⚠️ 充电/会员视频**仅在你已购买且有权限时**才能下载，脚本不绕过付费墙。
+> cookies 有效期约 1 个月，过期重跑登录脚本即可。
+
 ## ✨ 特性
 
 - 🛡️ **内置 412 反爬规避**：自动获取 buvid cookie + 正确的 Referer / Origin / User-Agent + `player_client=web`
 - 🎵 **音频模式**：只提取音频（高保真 AAC/m4a），最快
-- 🎬 **视频模式**：视频+音频合并（游客可达 480P）
+- 🎬 **视频模式**：视频+音频合并，**自动转 H.264 保证不黑屏**
+- 🔑 **扫码登录**：解锁 **720P/1080P 高清**、充电/会员内容
 - 📚 **批量模式**：下载整个 UP 主空间的所有视频音频，内置 3-6 秒随机间隔防封禁
 - 🔗 **智能输入**：支持完整 URL、`b23.tv` 短链、纯 BV 号、UP 主 UID / 空间链接
 - 🧩 **即插即用**：一个 bash 脚本，无其他外部服务依赖

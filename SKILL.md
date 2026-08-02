@@ -1,13 +1,13 @@
 ---
 name: bilibili-audio-dl
-version: 2.0.0
-description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案——自动获取 buvid cookie、设置正确的 Referer/Origin/User-Agent、使用 player_client=web 提取器。当用户提供 B站视频链接(bilibili.com、b23.tv、BV号)、要求下载B站音频/视频、提取B站声音、或批量下载某个UP主的全部内容时使用。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主。
+version: 3.0.0
+description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁。当用户提供 B站视频链接(bilibili.com、b23.tv、BV号)、要求下载B站音频/视频、提取B站声音、批量下载UP主、下载更高画质/充电/会员视频时使用。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载。
 user-invocable: true
 ---
 
 # B站音视频下载
 
-基于 yt-dlp 下载 B站音频/视频，绕过游客模式 412 反爬限制。
+基于 yt-dlp 下载 B站音频/视频，绕过游客 412 反爬限制，支持扫码登录解锁高清画质。
 
 ## 输入识别
 
@@ -20,62 +20,81 @@ user-invocable: true
 
 ## 🎯 交互流程（重要：先问再下载）
 
-**当用户发送一个视频链接时，先确认下载内容，不要直接默认下载：**
+**当用户发送一个视频链接时，先确认下载内容：**
 
 > 好的，我来下载这个视频。请问你要：
 > **1. 只要音频**（提取声音，文件小）
-> **2. 视频+音频**（含画面，游客可达 480P）
+> **2. 视频+音频**（含画面）
 
-用户选择后再调用脚本。
+用户选 2 时，**如果链接可能是高清/充电/会员向内容，再问一句是否需要高清**：
+> 游客只能到 480P。要 720P/1080P 高清吗？已登录可直接下，未登录可先扫码登录。
 
 - 选音频 → `audio` 模式
 - 选视频 → `video` 模式
+- 要高清但未登录 → 引导运行 `bilibili-login.sh` 扫码登录
 
-**例外**：用户已明确说"下载音频/下载这个视频的声音/提取音频"，则可直接执行 audio；明确说"下载视频/带画面/合并"，则直接执行 video。
+**例外**：用户已明确说"下载音频/声音"→ 直接 audio；"下载视频/带画面"→ 直接 video；"下载高清/最高画质/充电/会员视频"→ 检查登录态后选 720/1080。
+
+## 🔑 登录（解锁高清/充电视频）
+
+### 何时需要
+- 下载 720P/1080P 高清
+- 下载充电专属、会员专享内容
+
+### 扫码登录
+```bash
+bash <skill_dir>/scripts/bilibili-login.sh
+```
+流程：
+1. 脚本调 B站 API 生成登录二维码
+2. 生成 HTML 页面 `~/bilibili-login-qr.html`
+3. 用户用 **B站 App** 扫码确认
+4. 成功后 cookies 保存到 `~/.cache/bilibili-login-cookies.txt`
+
+**验证登录**：可通过 `get_me` 或下载一个高清视频测试。
+
+### 高清可用的提示
+- 脚本自动检测登录 cookies，存在即用高清格式
+- 充电/会员内容**仅在有权限时**可下载（不绕过付费墙）
+- 登录 cookies 有效期约 1 个月，过期需重新登录
 
 ## 可用模式
 
 | 模式 | 说明 |
 |------|------|
-| `audio`（默认） | 只下载音频流（m4a），标清可用 |
-| `video` | 下载视频流+音频流，用 ffmpeg 手动合并（游客 max 480p）|
-| `list` | 批量下载整个 UP 主空间的所有视频音频 |
+| `audio`（默认） | 只下载音频流（m4a） |
+| `video` | 下载视频流+音频流，ffmpeg 合并 |
+| `list` | 批量下载 UP 主空间视频音频 |
 
 ## 调用方式
 
 ```bash
-bash <skill_dir>/scripts/bilibili-dl.sh "<URL|BV号>" <mode> [输出目录] [容器mp4|mkv]
+bash <skill_dir>/scripts/bilibili-dl.sh "<URL|BV号>" <mode> [输出目录] [容器mp4|mkv] [分辨率480|720|1080]
 ```
 
-参数：
-- `mode`: `audio` | `video` | `list`
-- `[输出目录]`: 可选，默认 `~/B站音频下载/`
-- `[容器]`: 仅 video 模式有效，`mp4`(默认，H.264通用) | `mkv`(AV1/HEVC)
+| 参数 | 说明 |
+|------|------|
+| `mode` | `audio` / `video` / `list` |
+| `[输出目录]` | 可选，默认 `~/B站音频下载/` |
+| `[容器]` | 仅 video，`mp4`(默认) / `mkv` |
+| `[分辨率]` | 默认 `480`；`720`/`1080` 需登录 |
 
-示例：
 ```bash
-# 只要音频
-bash .../scripts/bilibili-dl.sh "BV1GJ411x7h7" audio
-# 视频+音频合并成 mp4
-bash .../scripts/bilibili-dl.sh "https://www.bilibili.com/video/BVxxx" video
-# 视频+音频合并成 mkv（保留源编码）
-bash .../scripts/bilibili-dl.sh "BVxxx" video ~/Downloads mkv
-# 批量下载UP主空间音频
-bash .../scripts/bilibili-dl.sh "https://space.bilibili.com/123456/video" list
+# 游客音频
+bash .../bilibili-dl.sh "BV1GJ411x7h7" audio
+# 游客视频 mp4
+bash .../bilibili-dl.sh "BVxxx" video
+# 登录后 1080P 高清
+bash .../bilibili-dl.sh "BVxxx" video ~/Downloads mp4 1080
+# 批量下载UP主 720P
+bash .../bilibili-dl.sh "https://space.bilibili.com/123456/video" list 480 720
 ```
 
-脚本自动处理：buvid cookie、请求头、b23.tv 短链解析、BV号转 URL。
-
-## 下载后
-
-- 默认保存到 `~/B站音频下载/`（可自定义第4参输出目录）
-- audio 得到 `.m4a`（高保真 AAC）
-- video 得到 `.mp4`（含画面）或 `.mkv`
-- 如需转 mp3 或改命名，见 `references/后处理.md`
+脚本自动处理：cookies 选择（登录优先）、buvid、请求头、短链解析。
 
 ## ⚠️ 重要限制
 
-1. **游客模式**：视频只能 **360P/480P**；720P+ 需登录态 cookie。
-2. **不绕过版权**：仅下载用户有权访问、非会员专享的内容。
-3. **B站风控**：批量下载必须用 `list` 模式（含 3-6 秒随机间隔），勿高频请求。
-4. **video 合并**：脚本分两次下分流再手动 ffmpeg 合并，规避 iSH 环境 yt-dlp 自动合并 bug。
+1. **游客模式视频仅 360P/480P**；720P+ 需扫码登录。
+2. **不绕过版权/付费墙**：仅下载用户有权访问、已是会员/已充电的内容。
+3. **B站风控**：批量勿高频，用 `list` 模式（3-6s 间隔）。
+4. **HEVC/AV1 黑屏**：video 模式自动转 H.264（libx264 或 h264_videotoolbox）保证兼容。

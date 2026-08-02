@@ -4,14 +4,14 @@
 # 基于 yt-dlp，内置 B站反爬(412)规避参数 + buvid cookie 自动获取
 #
 # 用法:
-#   bilibili-dl.sh <视频URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv]
+#   bilibili-dl.sh <视频URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv] [最高分辨率]
 #
 # 模式: audio(默认,只要音频) | video(视频+音频合并) | list(批量UP主)
+# 分辨率: 480(默认游客) | 720 | 1080  (720+ 需登录, 见 bilibili-login.sh)
 #
 # video 模式说明:
 #   分两次下载视频流和音频流(避免一次多格式触发 yt-dlp 自动 merge 崩溃),
 #   再用独立 ffmpeg 手动合并。规避 iSH 环境 yt-dlp 后处理的 bug。
-#   容器: mp4(H.264便于通用播放,默认) | mkv(AV1/HEVC)
 # =====================================================================
 set -euo pipefail
 
@@ -19,21 +19,35 @@ set -euo pipefail
 WORK="${HOME:-/root}/B站音频下载"
 YTDLP="$(command -v yt-dlp)"
 FFMPEG="$(command -v ffmpeg)"
-COOKIE_FILE="${HOME:-/root}/.cache/bilibili-buvid.txt"
+BUFILE="${HOME:-/root}/.cache/bilibili-buvid.txt"
+LOGINFILE="${HOME:-/root}/.cache/bilibili-login-cookies.txt"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 mkdir -p "$WORK" "${HOME:-/root}/.cache"
 
-# ---------- 获取 buvid cookie (B站反爬必需) ----------
-get_buvid() {
-    if [[ -s "$COOKIE_FILE" ]]; then
-        return 0
+# ---------- 分辨率映射 ----------
+# 480=游客, 720=登录级, 1080=登录级
+RES_MAX="${5:-480}"
+case "$RES_MAX" in
+    1080|720) RES_EXPR="bv*[height<=${RES_MAX}]" ;;
+    *)        RES_EXPR="bv*[height<=480]" ;;
+esac
+
+# ---------- cookies 准备: 优选登录, 回落 buvid ----------
+get_cookies() {
+    local ck=""
+    if [[ -s "$LOGINFILE" ]]; then
+        ck="$LOGINFILE"
+        echo ">>> 使用登录 cookies (高清可用)"
+    else
+        # 生成 buvid (若没有)
+        if [[ ! -s "$BUFILE" ]]; then
+            echo ">>> 获取 buvid cookie..."
+            curl -s -c "$BUFILE" -A "$UA" "https://www.bilibili.com/" -o /dev/null
+            chmod 600 "$BUFILE" 2>/dev/null || true
+        fi
+        ck="$BUFILE"
     fi
-    echo ">>> 获取 buvid cookie..."
-    curl -s -c "$COOKIE_FILE" \
-        -A "$UA" \
-        "https://www.bilibili.com/" -o /dev/null
-    chmod 600 "$COOKIE_FILE" 2>/dev/null || true
-    echo ">>> buvid cookie 已保存"
+    echo "$ck"
 }
 
 # ---------- 标准化 URL ----------
@@ -55,37 +69,34 @@ safe_name() {
     echo "$1" | tr -d '/\\:*?"<>|'
 }
 
-# ---------- 读取标题(从信息json) ----------
+# ---------- 读取标题 ----------
 fetch_title() {
-    local url="$1"
-    yt-dlp "${ARGS[@]}" --skip-download --print "%(title)s" "$url" 2>/dev/null
+    local url="$1" ck="$2"
+    yt-dlp "${ARGS[@]}" --cookies "$ck" --skip-download --print "%(title)s" "$url" 2>/dev/null
 }
 
-# ---------- 视频+音频下载并手动合并 ----------
+# ---------- 视频+音频下载并合并 ----------
 download_video() {
-    local url="$1" outdir="$2" container="$3"
+    local url="$1" outdir="$2" ck="$3"
     local title vfile afile out
     : > "$outdir/.running"
 
-    # 1) 获取干净标题(失败不中断)
-    title="$(fetch_title "$url" | head -1 || true)"
+    title="$(fetch_title "$url" "$ck" | head -1 || true)"
     title="$(safe_name "${title:-video}")"
     echo ">>> 标题: $title"
 
-    # 2) 分两次下载(单格式, 不触发 yt-dlp 自动 merge)
-    echo ">>> [1/2] 下载视频流 (游客 max 480p)..."
-    yt-dlp "${ARGS[@]}" \
+    echo ">>> [1/2] 下载视频流 (max ${RES_MAX}p)..."
+    yt-dlp "${ARGS[@]}" --cookies "$ck" \
         -o "$outdir/video_part.%(ext)s" \
-        -f "bv*[height<=480]/b[height<=480]" \
+        -f "${RES_EXPR}/b[height<=${RES_MAX}]" \
         "$url"
 
     echo ">>> [2/2] 下载音频流..."
-    yt-dlp "${ARGS[@]}" \
+    yt-dlp "${ARGS[@]}" --cookies "$ck" \
         -o "$outdir/audio_part.%(ext)s" \
-        -f "ba/b[height<=480]" \
+        -f "ba/b[height<=${RES_MAX}]" \
         "$url"
 
-    # 3) 定位分离文件
     vfile="$(ls -t "$outdir"/video_part.* 2>/dev/null | head -1)"
     afile="$(ls -t "$outdir"/audio_part.* 2>/dev/null | head -1)"
 
@@ -94,83 +105,70 @@ download_video() {
         return 1
     fi
 
+    local container="${4:-mp4}"
     out="${outdir}/${title}.${container}"
     echo ">>> 合并 → $title.$container"
     echo "    视频: $(basename "$vfile") ($(du -h "$vfile"|cut -f1))"
     echo "    音频: $(basename "$afile") ($(du -h "$afile"|cut -f1))"
 
-    # 检测视频流编码(容错: 失败时设为 unknown, 不中断脚本)
+    # 检测视频流编码
     local vcodec="unknown"
     vcodec="$( "$FFMPEG" -i "$vfile" 2>&1 | grep -oaE 'Video: [a-z0-9_]+' | head -1 | sed 's/Video: //' || true )"
     echo "    诊断: 视频流编码=${vcodec}"
 
     case "$container" in
         mkv)
-            # mkv 容器原样复制(保留源编码)
             "$FFMPEG" -y -i "$vfile" -i "$afile" -c copy "$out" 2>&1 | tail -3
             ;;
-        *) # mp4 -- 兼容优先: 非 h264 自动转码(用环境可用的任一编码器)
+        *)
             if [[ "$vcodec" == h264 || "$vcodec" == *avc* ]]; then
-                # 已是 H264: 直接复制
                 "$FFMPEG" -y -i "$vfile" -i "$afile" \
                     -map 0:v:0 -map 1:a:0 \
                     -c:v copy -c:a copy -movflags +faststart \
                     "$out" 2>&1 | tail -3
             else
-                # 需要转码. 选编码器: libx264 > h264_videotoolbox
-                local H264_ENC=""
-                local ENCODERS
+                local H264_ENC="" ENCODERS
                 ENCODERS="$("$FFMPEG" -hide_banner -encoders 2>/dev/null)"
                 if [[ "$ENCODERS" == *libx264* ]]; then
                     H264_ENC=libx264
                 elif [[ "$ENCODERS" == *h264_videotoolbox* ]]; then
                     H264_ENC=h264_videotoolbox
                 fi
-
                 if [[ -n "$H264_ENC" ]]; then
-                    echo "    ⚠️ 视频流是 ${vcodec}(HEVC/AV1), 用 ${H264_ENC} 转码为 H.264..."
+                    echo "    ⚠️ 视频流是 ${vcodec}, 用 ${H264_ENC} 转码为 H.264..."
                     if [[ "$H264_ENC" == "libx264" ]]; then
                         "$FFMPEG" -y -i "$vfile" -i "$afile" \
                             -map 0:v:0 -map 1:a:0 \
-                            -c:v libx264 -preset fast -crf 26 -maxrate 1000k -bufsize 2000k \
-                            -c:a aac -b:a 96k \
-                            -movflags +faststart \
-                            "$out" 2>&1 | tail -3
+                            -c:v libx264 -preset fast -crf 26 -maxrate 1200k -bufsize 2400k \
+                            -c:a aac -b:a 96k -movflags +faststart "$out" 2>&1 | tail -3
                     else
                         "$FFMPEG" -y -i "$vfile" -i "$afile" \
                             -map 0:v:0 -map 1:a:0 \
-                            -c:v h264_videotoolbox -b:v 900k \
-                            -c:a aac -b:a 96k \
-                            -movflags +faststart \
-                            "$out" 2>&1 | tail -3
+                            -c:v h264_videotoolbox -b:v 1200k \
+                            -c:a aac -b:a 96k -movflags +faststart "$out" 2>&1 | tail -3
                     fi
                 else
-                    # 无任何 H.264 编码器: 原样复制但提示
-                    echo "    ⚠️ 环境无 H264 编码器, 原样复制 ${vcodec} 流(部分设备可能黑屏)。"
-                    echo "      建议安装完整 ffmpeg (macOS: brew install ffmpeg / Linux: apt install ffmpeg)。"
+                    echo "    ⚠️ 无 H264 编码器, 原样复制 ${vcodec} 流。请装完整 ffmpeg。" >&2
                     "$FFMPEG" -y -i "$vfile" -i "$afile" \
                         -map 0:v:0 -map 1:a:0 \
-                        -c:v copy -c:a copy -movflags +faststart \
-                        "$out" 2>&1 | tail -3
+                        -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
                 fi
             fi
             ;;
     esac
 
-    # 清理中间文件
     rm -f "$vfile" "$afile" "$outdir/.running"
-
     if [[ -f "$out" ]]; then
         echo ">>> ✅ 已生成: $out ($(du -h "$out"|cut -f1))"
     else
-        echo ">>> ⚠️ 合并产物不存在, 保留中间文件供检查" >&2
-        return 1
+        echo ">>> ⚠️ 合并产物不存在" >&2; return 1
     fi
 }
 
 # ---------- 主逻辑 ----------
 [[ $# -lt 1 ]] && {
-    echo "用法: bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv]" >&2
+    echo "用法: bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv] [分辨率480|720|1080]" >&2
+    echo "提示: 720P+ 需先登录 → 运行 bilibili-login.sh" >&2
     exit 1
 }
 
@@ -178,54 +176,54 @@ INPUT="$1"
 MODE="${2:-audio}"
 OUTDIR="${3:-$WORK}"
 CONTAINER="${4:-mp4}"
+RES_MAX="${5:-480}"
 
 URL="$(normalize_url "$INPUT")"
+CK="$(get_cookies)"
 echo "============================================"
 echo " B站下载 | 模式: $MODE"
 echo " 目标  : $URL"
 echo " 输出  : $OUTDIR"
+echo " 分辨率: ${RES_MAX}p"
 echo "============================================"
 
 mkdir -p "$OUTDIR"
-get_buvid
 
 # 公共参数数组
 ARGS=(
     --user-agent "$UA"
     --add-header "Referer:https://www.bilibili.com/"
     --add-header "Origin:https://www.bilibili.com"
-    --cookies "$COOKIE_FILE"
     --extractor-args "bilibili:player_client=web"
-    --retries 8 --fragment-retries 8
-    --no-mtime
+    --retries 8 --fragment-retries 8 --no-mtime
 )
 
 case "$MODE" in
     audio|a)
         echo ">>> 下载音频..."
-        yt-dlp "${ARGS[@]}" \
+        yt-dlp "${ARGS[@]}" --cookies "$CK" \
             -o "$OUTDIR/%(title)s.%(ext)s" \
-            -f "ba/b[height<=480]" \
+            -f "ba/b[height<=${RES_MAX}]" \
             "$URL"
         ;;
     video|v)
-        download_video "$URL" "$OUTDIR" "$CONTAINER"
+        download_video "$URL" "$OUTDIR" "$CK" "$CONTAINER"
         ;;
     list|l)
         [[ "$URL" =~ space\.bilibili\.com ]] || {
             echo "list 模式需要 UP主空间链接" >&2; exit 2
         }
-        echo ">>> 批量下载 UP主音频(间隔避免风控)..."
-        yt-dlp "${ARGS[@]}" \
+        echo ">>> 批量下载 UP主视频 > ${RES_MAX}p..."
+        yt-dlp "${ARGS[@]}" --cookies "$CK" \
             -o "$OUTDIR/%(title)s.%(ext)s" \
-            -f "ba/b[height<=480]" \
+            -f "ba/b[height<=${RES_MAX}]" \
             --download-archive "$OUTDIR/archive.txt" \
             --sleep-interval 3 --max-sleep-interval 6 \
             --concurrent-fragments 8 \
             "$URL"
         ;;
     *)
-        echo "未知模式: $MODE (可用: audio/video/list)" >&2; exit 2
+        echo "未知模式: $MODE (audio/video/list)" >&2; exit 2
         ;;
 esac
 
