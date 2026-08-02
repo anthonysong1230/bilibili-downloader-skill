@@ -100,7 +100,7 @@ cat > "$OUTFILE" <<HTMLEOF
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:#181a20; color:#eee; font-family:-apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif; min-height:100vh; }
 .cover-wrap { position:relative; width:100%; aspect-ratio:16/9; background:#000; overflow:hidden; }
-.cover-wrap img { width:100%; height:100%; object-fit:cover; opacity:.55; }
+.cover-wrap img { display:block; width:100%; height:100%; object-fit:cover; opacity:.55; }
 .cover-mask { position:absolute; inset:0; background:linear-gradient(180deg,transparent 30%,rgba(24,26,32,.92) 100%); }
 .cover-info { position:absolute; left:0; right:0; bottom:0; padding:14px 16px 18px; }
 .cover-info .badge { display:inline-block; background:#fb7299; color:#fff; font-size:11px; padding:2px 8px; border-radius:10px; margin-bottom:8px; }
@@ -109,7 +109,7 @@ body { background:#181a20; color:#eee; font-family:-apple-system,"PingFang SC","
 .player iframe { width:100%; height:100%; border:0; display:block; }
 .section { padding:12px 16px; }
 .section h2 { font-size:13px; color:#99a2b5; margin-bottom:8px; font-weight:500; }
-.parts { display:flex; flex-direction:column; gap:6px; }
+.parts { display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; -webkit-overflow-scrolling:touch; }
 .part { display:flex; align-items:center; gap:10px; padding:8px 10px; background:#23262e; border-radius:8px; font-size:13px; }
 .part .pnum { color:#fb7299; font-weight:600; flex-shrink:0; }
 .part .ptitle { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
