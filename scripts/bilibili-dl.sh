@@ -370,6 +370,11 @@ note() {  # note <文本...>
 INPUT="$1"
 MODE="${2:-audio}"
 OUTDIR="${3:-$WORK}"
+# ⚠️ 相对路径防御: 转绝对路径, 防止 mkdir 与写入路径错位(文件"已生成"却找不到)
+if [[ "$OUTDIR" != /* && "$OUTDIR" != "$WORK" ]]; then
+    OUTDIR="$(pwd)/$OUTDIR"
+    echo ">>> 输出目录是相对路径, 已转为绝对路径: $OUTDIR" >&2
+fi
 # ⚠️ 智能参数解析: 兼容三种调用方式
 #   官方: <URL> <mode> [outdir] [容器mp4|mkv] [分辨率] [分P号]
 #   习惯: <URL> <mode> [outdir] [分辨率] [分P号]   (容器省略, 默认mp4)
