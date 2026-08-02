@@ -26,10 +26,11 @@ mkdir -p "$WORK" "${HOME:-/root}/.cache"
 
 # ---------- 分辨率映射 ----------
 # 480=游客, 720=登录级, 1080=登录级
+# ⚠️ AV1 规避: 优先选 H.264(avc1) 编码, 否则 iSH 精简 ffmpeg 无法解码 AV1 会转码失败
 RES_MAX="${5:-480}"
 case "$RES_MAX" in
-    1080|720) RES_EXPR="bv*[height<=${RES_MAX}]" ;;
-    *)        RES_EXPR="bv*[height<=480]" ;;
+    1080|720) RES_EXPR="bv*[height<=${RES_MAX}][vcodec~='^avc']/bv*[height<=${RES_MAX}]" ;;
+    *)        RES_EXPR="bv*[height<=480][vcodec~='^avc']/bv*[height<=480]" ;;
 esac
 
 # ---------- cookies 准备: 优选登录, 回落 buvid ----------
@@ -147,16 +148,31 @@ download_video() {
                             -c:v h264_videotoolbox -b:v 1200k \
                             -c:a aac -b:a 96k -movflags +faststart "$out" 2>&1 | tail -3
                     fi
-                    # 验证转码结果: 必须同时有视频+音频流, 否则回退copy
+                    # 验证转码结果: 必须同时有视频+音频流, 否则回退
                     local has_video
                     has_video="$("$FFMPEG" -i "$out" 2>&1 | grep -c 'Video:')"
                     if [[ "$has_video" -eq 0 || ! -s "$out" ]]; then
-                        echo "    ⚠️ ${H264_ENC} 转码失败(解码器不支持${vcodec}), 回退为原样复制..."
+                        echo "    ⚠️ ${H264_ENC} 转码失败(解码器不支持${vcodec}), 尝试重新下载 avc(H.264) 视频流..."
                         rm -f "$out"
-                        "$FFMPEG" -y -i "$vfile" -i "$afile" \
-                            -map 0:v:0 -map 1:a:0 \
-                            -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
-                        echo "    ⚠️ 结果是 ${vcodec} 编码, 需现代播放器(VLC/mpv)或装完整ffmpeg转H264。" >&2
+                        local vfile2=""
+                        yt-dlp "${ARGS[@]}" --cookies "$ck" \
+                            -o "$outdir/video_part_avc.%(ext)s" \
+                            -f "bv*[vcodec~='^avc'][height<=${RES_MAX}]/b[height<=${RES_MAX}]" \
+                            "$url" 2>&1 | tail -2 || true
+                        vfile2="$(ls -t "$outdir"/video_part_avc.* 2>/dev/null | head -1 || true)"
+                        if [[ -n "$vfile2" ]]; then
+                            echo "    ✅ 拿到 avc 流, 直接合并 (免转码)..."
+                            "$FFMPEG" -y -i "$vfile2" -i "$afile" \
+                                -map 0:v:0 -map 1:a:0 \
+                                -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
+                            rm -f "$vfile2"
+                        else
+                            echo "    ⚠️ 无 avc 流可用, 回退原样复制 ${vcodec} 流。"
+                            "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                                -map 0:v:0 -map 1:a:0 \
+                                -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
+                            echo "    ⚠️ 结果是 ${vcodec} 编码, 需现代播放器(VLC/mpv)或装完整ffmpeg转H264。" >&2
+                        fi
                     fi
                 else
                     echo "    ⚠️ 无 H264 编码器, 原样复制 ${vcodec} 流。请装完整 ffmpeg。" >&2

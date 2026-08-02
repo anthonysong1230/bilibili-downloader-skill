@@ -1,7 +1,7 @@
 ---
 name: bilibili-audio-dl
-version: 3.0.0
-description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁。当用户提供 B站视频链接(bilibili.com、b23.tv、BV号)、要求下载B站音频/视频、提取B站声音、批量下载UP主、下载更高画质/充电/会员视频时使用。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载。
+version: 3.1.0
+description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先)。当用户提供 B站视频链接(bilibili.com、b23.tv、BV号)、要求下载B站音频/视频、提取B站声音、批量下载UP主、下载更高画质/充电/会员视频时使用。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载。
 user-invocable: true
 ---
 
@@ -97,4 +97,12 @@ bash .../bilibili-dl.sh "https://space.bilibili.com/123456/video" list 480 720
 1. **游客模式视频仅 360P/480P**；720P+ 需扫码登录。
 2. **不绕过版权/付费墙**：仅下载用户有权访问、已是会员/已充电的内容。
 3. **B站风控**：批量勿高频，用 `list` 模式（3-6s 间隔）。
-4. **HEVC/AV1 黑屏**：video 模式自动转 H.264（libx264 或 h264_videotoolbox）保证兼容。
+4. **HEVC/AV1 黑屏**：video 模式优先选 H.264(avc1) 流；若只剩 HEVC/AV1，自动转码 H.264（libx264 或 h264_videotoolbox）；转码失败（如 iSH 精简 ffmpeg 不支持 AV1 解码）会自动重下 avc 流免转码合并，保证 iOS 可直接播放。
+
+## 🔧 AV1 规避机制（v3.1.0）
+
+iSH 精简版 ffmpeg **无法解码 AV1**（报 `Decode error rate exceeds maximum`），HEVC 也仅靠 videotoolbox 硬解。因此：
+
+- **下载阶段**：格式表达式 `bv*[height<=N][vcodec~='^avc']/bv*[height<=N]` 优先匹配 H.264 流，只有全部格式都是 HEVC/AV1 时才回落
+- **合并阶段**：检测到非 h264 编码时先尝试 libx264/h264_videotoolbox 转码；失败则自动用 `-f "bv*[vcodec~='^avc']..."` 重下 H.264 流直接 copy 合并
+- 手动验证命令：`yt-dlp -F <URL>` 看 `avc1.*` vs `av01.*` 后缀即可判断该视频有无 H.264 源
