@@ -116,6 +116,7 @@ probe() {  # probe <file> <stream> <field>
 download_video() {
     local url="$1" outdir="$2" ck="$3"
     local container="${4:-mp4}" part_num="${5:-}"
+    local cut_start="${6:-}" cut_dur="${7:-}"
     local bv pnum resp cid title vurl aurl vfile afile out
     : > "$outdir/.running"
 
@@ -188,6 +189,9 @@ print(auds[0]['baseUrl'])
 
     out="${outdir}/${title}.${container}"
     [[ -n "$part_num" ]] && out="${outdir}/P${part_num}_${title}.${container}"
+    if [[ -n "$cut_start" && -n "$cut_dur" ]]; then
+        out="${out%.${container}}_[${cut_start}s-$((${cut_start}+${cut_dur}))s].${container}"
+    fi
 
     echo ">>> 合并 → $(basename "$out")"
     echo "    视频: $(basename "$vfile") ($(du -h "$vfile"|cut -f1))"
@@ -198,13 +202,22 @@ print(auds[0]['baseUrl'])
     vcodec="${vcodec:-unknown}"
     echo "    诊断: 视频流编码=${vcodec}"
 
+    # 截取参数: 双输入都 seek, 输出限长
+    local CUT1="" CUT2="" CUTOUT=""
+    if [[ -n "$cut_start" && -n "$cut_dur" ]]; then
+        CUT1="-ss $cut_start"
+        CUT2="-ss $cut_start"
+        CUTOUT="-t $cut_dur"
+        echo ">>> 截取片段: ${cut_start}s 起, 时长 ${cut_dur}s..."
+    fi
+
     case "$container" in
         mkv)
-            "$FFMPEG" -y -i "$vfile" -i "$afile" -c copy "$out" 2>&1 | tail -3
+            "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT -c copy "$out" 2>&1 | tail -3
             ;;
         *)
             if [[ "$vcodec" == h264 || "$vcodec" == *avc* ]]; then
-                "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
                     -map 0:v:0 -map 1:a:0 \
                     -c:v copy -c:a copy -movflags +faststart \
                     "$out" 2>&1 | tail -3
@@ -219,12 +232,12 @@ print(auds[0]['baseUrl'])
                 if [[ -n "$H264_ENC" ]]; then
                     echo "    ⚠️ 视频流是 ${vcodec}, 尝试用 ${H264_ENC} 转码为 H.264..."
                     if [[ "$H264_ENC" == "libx264" ]]; then
-                        "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                        "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
                             -map 0:v:0 -map 1:a:0 \
                             -c:v libx264 -preset fast -crf 26 -maxrate 1200k -bufsize 2400k \
                             -c:a aac -b:a 96k -movflags +faststart "$out" 2>&1 | tail -3
                     else
-                        "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                        "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
                             -map 0:v:0 -map 1:a:0 \
                             -c:v h264_videotoolbox -b:v 1200k \
                             -c:a aac -b:a 96k -movflags +faststart "$out" 2>&1 | tail -3
@@ -258,13 +271,13 @@ print(auds[0]['baseUrl'])
                         vfile2="$outdir/.video_tmp_${pnum}_avc.m4s"
                         if [[ -n "$vurl2" ]] && timeout 180 curl -s --max-time 170 -e "https://www.bilibili.com/" -H "User-Agent: $UA" -o "$vfile2" "$vurl2" 2>/dev/null && [[ -s "$vfile2" ]]; then
                             echo "    ✅ 拿到 avc 流, 直接合并 (免转码)..."
-                            "$FFMPEG" -y -i "$vfile2" -i "$afile" \
+                            "$FFMPEG" -y $CUT1 -i "$vfile2" $CUT2 -i "$afile" $CUTOUT \
                                 -map 0:v:0 -map 1:a:0 \
                                 -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
                             rm -f "$vfile2"
                         else
                             echo "    ⚠️ 无 avc 流可用, 回退原样复制 ${vcodec} 流。"
-                            "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                            "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
                                 -map 0:v:0 -map 1:a:0 \
                                 -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
                             echo "    ⚠️ 结果是 ${vcodec} 编码, 需现代播放器(VLC/mpv)或装完整ffmpeg转H264。" >&2
@@ -272,7 +285,7 @@ print(auds[0]['baseUrl'])
                     fi
                 else
                     echo "    ⚠️ 无 H264 编码器, 原样复制 ${vcodec} 流。请装完整 ffmpeg。" >&2
-                    "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                    "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
                         -map 0:v:0 -map 1:a:0 \
                         -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
                 fi
@@ -297,6 +310,7 @@ print(auds[0]['baseUrl'])
 # ---------- 音频下载 (API直链方案, 绕开 yt-dlp 合集遍历卡死) ----------
 download_audio() {
     local url="$1" outdir="$2" ck="$3" part_num="${4:-}"
+    local cut_start="${5:-}" cut_dur="${6:-}"
     local bv pnum resp cid title aurl out afile
     bv="$(echo "$url" | grep -oE 'BV[0-9A-Za-z]{10}' | head -1 || true)"
     [[ -z "$bv" ]] && { echo "ERROR: 无法提取BV号: $url" >&2; return 1; }
@@ -341,16 +355,57 @@ print(a[0]['baseUrl'] if a else '')
     # 3. 下载 + 转 m4a
     out="${outdir}/${title}.m4a"
     [[ -n "$part_num" ]] && out="${outdir}/P${part_num}_${title}.m4a"
+    if [[ -n "$cut_start" && -n "$cut_dur" ]]; then
+        out="${out%.m4a}_[${cut_start}s-$((${cut_start}+${cut_dur}))s].m4a"
+    fi
     afile="${outdir}/.audio_tmp_${pnum}.m4s"
     echo ">>> 下载音频 ${part_num:+P$part_num }(API直链)..."
     if ! timeout 90 curl -s --max-time 80 -e "https://www.bilibili.com/" -H "User-Agent: $UA" -o "$afile" "$aurl"; then
         echo "ERROR: 音频流下载失败" >&2; rm -f "$afile"; return 1
     fi
-    if ! timeout 90 "$FFMPEG" -y -i "$afile" -c copy -movflags +faststart "$out" >/dev/null 2>&1; then
-        echo "ERROR: 音频转 m4a 失败" >&2; rm -f "$afile"; return 1
+    if [[ -n "$cut_start" && -n "$cut_dur" ]]; then
+        echo ">>> 截取片段: ${cut_start}s 起, 时长 ${cut_dur}s..."
+        if ! timeout 90 "$FFMPEG" -y -ss "$cut_start" -i "$afile" -t "$cut_dur" -c copy -movflags +faststart "$out" >/dev/null 2>&1; then
+            echo "ERROR: 音频截取失败" >&2; rm -f "$afile"; return 1
+        fi
+    else
+        if ! timeout 90 "$FFMPEG" -y -i "$afile" -c copy -movflags +faststart "$out" >/dev/null 2>&1; then
+            echo "ERROR: 音频转 m4a 失败" >&2; rm -f "$afile"; return 1
+        fi
     fi
     rm -f "$afile"
     note ">>> ✅ 已生成: $(basename "$out") ($(du -h "$out"|cut -f1))"
+}
+
+# ---------- 时间转秒: "1:30"→90, "90"→90 ----------
+to_seconds() {
+    local t="$1"
+    if [[ "$t" =~ ^([0-9]+):([0-9]+)$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} * 60 + ${BASH_REMATCH[2]} ))
+    elif [[ "$t" =~ ^[0-9]+$ ]]; then
+        echo "$t"
+    else
+        echo ""
+    fi
+}
+
+# ---------- 截取区间解析: "1:30-2:45" → 输出 "start_sec dur_sec" ----------
+parse_range() {
+    local range="$1"
+    local start_t end_t start_s end_s
+    [[ "$range" =~ ^([0-9]+(:[0-9]+)?)-([0-9]+(:[0-9]+)?)$ ]] || {
+        echo "ERROR: 截取区间格式错误: '$range' (示例: 1:30-2:45 或 90-165)" >&2
+        return 1
+    }
+    start_t="${BASH_REMATCH[1]}"
+    end_t="${BASH_REMATCH[3]}"
+    start_s="$(to_seconds "$start_t")"
+    end_s="$(to_seconds "$end_t")"
+    [[ -n "$start_s" && -n "$end_s" && "$end_s" -gt "$start_s" ]] || {
+        echo "ERROR: 截取区间无效: $range (结束必须大于开始)" >&2
+        return 1
+    }
+    echo "$start_s $(( end_s - start_s ))"
 }
 
 # ---------- 日志: 关键摘要同时写入文件, 防 tail 截断丢信息 ----------
@@ -362,7 +417,7 @@ note() {  # note <文本...>
 
 # ---------- 主逻辑 ----------
 [[ $# -lt 1 ]] && {
-    echo "用法: bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv] [分辨率480|720|1080] [分P号]" >&2
+    echo "用法: bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv] [分辨率480|720|1080] [分P号] [截取区间]" >&2
     echo "提示: 720P+ 需先登录 → 运行 bilibili-login.sh" >&2
     exit 1
 }
@@ -370,6 +425,8 @@ note() {  # note <文本...>
 INPUT="$1"
 MODE="${2:-audio}"
 OUTDIR="${3:-$WORK}"
+CUT_RANGE="${7:-}"   # 可选: 截取区间 "1:30-2:45" 或 "90-165"
+CUT_START="" CUT_DUR=""
 # ⚠️ 相对路径防御: 转绝对路径, 防止 mkdir 与写入路径错位(文件"已生成"却找不到)
 if [[ "$OUTDIR" != /* && "$OUTDIR" != "$WORK" ]]; then
     OUTDIR="$(pwd)/$OUTDIR"
@@ -392,6 +449,14 @@ else
     CONTAINER="mp4"
     RES_MAX="${5:-480}"
     PART_NUM="${6:-}"
+fi
+
+# 截取区间解析: "1:30-2:45" → CUT_START/CUT_DUR
+if [[ -n "$CUT_RANGE" ]]; then
+    RANGE_VALS="$(parse_range "$CUT_RANGE")" || exit 1
+    CUT_START="$(echo "$RANGE_VALS" | awk '{print $1}')"
+    CUT_DUR="$(echo "$RANGE_VALS" | awk '{print $2}')"
+    echo ">>> 截取片段: ${CUT_START}s - $((CUT_START+CUT_DUR))s (时长 ${CUT_DUR}s)"
 fi
 
 URL="$(normalize_url "$INPUT")"
@@ -430,16 +495,22 @@ ARGS=(
 case "$MODE" in
     audio|a)
         if [[ "$PART_NUM" == "all" ]]; then
+            if [[ -n "$CUT_START" ]]; then
+                echo "ERROR: 截取片段不支持 all 模式, 请指定具体P号" >&2; exit 1
+            fi
             download_all_parts "$URL" "$FINAL_OUT" "$CK" "audio" ""
         else
-            download_audio "$URL" "$FINAL_OUT" "$CK" "$PART_NUM"
+            download_audio "$URL" "$FINAL_OUT" "$CK" "$PART_NUM" "$CUT_START" "$CUT_DUR"
         fi
         ;;
     video|v)
         if [[ "$PART_NUM" == "all" ]]; then
+            if [[ -n "$CUT_START" ]]; then
+                echo "ERROR: 截取片段不支持 all 模式, 请指定具体P号" >&2; exit 1
+            fi
             download_all_parts "$URL" "$FINAL_OUT" "$CK" "video" "$CONTAINER"
         else
-            download_video "$URL" "$FINAL_OUT" "$CK" "$CONTAINER" "$PART_NUM"
+            download_video "$URL" "$FINAL_OUT" "$CK" "$CONTAINER" "$PART_NUM" "$CUT_START" "$CUT_DUR"
         fi
         ;;
     list|l)
