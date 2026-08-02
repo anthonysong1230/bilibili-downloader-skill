@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =====================================================================
-# bilibili-preview.sh - 生成B站视频预览页(封面+标题+播放器) (Minis)
+# bilibili-preview.sh - 生成B站视频预览页(封面+标题+播放跳转) (Minis)
 # 产出 HTML 到 /var/minis/workspace/bilibili-preview/, 返回 minis:// 链接
-# 用户点开即可看到封面并直接播放, 不用跳转B站页面
+# 封面可点击跳转 mbplayer 直链播放(移动端 iframe 自动播放被禁, 故用跳转)
 #
 # 用法:
 #   bilibili-preview.sh "<URL|BV号>[?p=N]"
@@ -58,8 +58,8 @@ print(f\"{pic} {data.get('title','')}\")
 [[ -z "$PIC" || "$PIC" == "|" ]] && { echo "ERROR: 获取视频信息失败(可能被风控)" >&2; exit 1; }
 
 # ---------- 2. pagelist: 分P列表 ----------
-PARTS_HTML=""
 PART_COUNT=1
+PARTS_HTML=""
 RESP="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/pagelist" \
     --data-urlencode "bvid=$BV" \
     -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$CK" || true)"
@@ -99,14 +99,15 @@ cat > "$OUTFILE" <<HTMLEOF
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:#181a20; color:#eee; font-family:-apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif; min-height:100vh; }
-.cover-wrap { position:relative; width:100%; aspect-ratio:16/9; background:#000; overflow:hidden; }
-.cover-wrap img { display:block; width:100%; height:100%; object-fit:cover; opacity:.55; }
-.cover-mask { position:absolute; inset:0; background:linear-gradient(180deg,transparent 30%,rgba(24,26,32,.92) 100%); }
-.cover-info { position:absolute; left:0; right:0; bottom:0; padding:14px 16px 18px; }
+.cover-link { display:block; position:relative; width:100%; aspect-ratio:16/9; background:#000; overflow:hidden; text-decoration:none; }
+.cover-link img { display:block; width:100%; height:100%; object-fit:cover; opacity:.6; transition:opacity .2s; }
+.cover-link:active img { opacity:.9; }
+.cover-mask { position:absolute; inset:0; background:linear-gradient(180deg,transparent 30%,rgba(24,26,32,.92) 100%); pointer-events:none; }
+.play-btn { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:64px; height:64px; border-radius:50%; background:rgba(251,114,153,.92); color:#fff; font-size:26px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 12px rgba(0,0,0,.4); pointer-events:none; }
+.tap-hint { text-align:center; color:#99a2b5; font-size:12px; padding:8px 0 4px; }
+.cover-info { position:absolute; left:0; right:0; bottom:0; padding:14px 16px 18px; pointer-events:none; }
 .cover-info .badge { display:inline-block; background:#fb7299; color:#fff; font-size:11px; padding:2px 8px; border-radius:10px; margin-bottom:8px; }
 .cover-info h1 { font-size:17px; line-height:1.4; font-weight:600; text-shadow:0 1px 3px rgba(0,0,0,.6); }
-.player { width:100%; aspect-ratio:16/9; background:#000; }
-.player iframe { width:100%; height:100%; border:0; display:block; }
 .section { padding:12px 16px; }
 .section h2 { font-size:13px; color:#99a2b5; margin-bottom:8px; font-weight:500; }
 .parts { display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; -webkit-overflow-scrolling:touch; }
@@ -118,17 +119,16 @@ body { background:#181a20; color:#eee; font-family:-apple-system,"PingFang SC","
 </style>
 </head>
 <body>
-<div class="cover-wrap">
+<a class="cover-link" href="${PLAYER}">
   <img src="${PIC}" alt="封面" onerror="this.style.display='none'">
   <div class="cover-mask"></div>
+  <div class="play-btn">▶</div>
   <div class="cover-info">
     <span class="badge">${PART_COUNT} 个分P${P_NUM:+ · P${P_NUM}}</span>
     <h1>${TITLE_ESC}</h1>
   </div>
-</div>
-<div class="player">
-  <iframe src="${PLAYER}" allowfullscreen scrolling="no"></iframe>
-</div>
+</a>
+<div class="tap-hint">👆 点击封面播放视频</div>
 <div class="section">
   <h2>分P列表</h2>
   <div class="parts">${PARTS_HTML:-<div class="part"><span class="pnum">P1</span><span class="ptitle">单P视频</span></div>}</div>
@@ -139,5 +139,5 @@ body { background:#181a20; color:#eee; font-family:-apple-system,"PingFang SC","
 HTMLEOF
 
 echo ">>> 预览页已生成: $OUTFILE" >&2
-echo ">>> 在线预览: https://www.bilibili.com/blackboard/webplayer/mbplayer.html?bvid=${BV}&p=${P_NUM}" >&2
+echo ">>> 直链: $PLAYER" >&2
 echo "minis://workspace/bilibili-preview/${BV}_p${P_NUM}.html"
