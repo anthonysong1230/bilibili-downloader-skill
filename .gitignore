@@ -1,0 +1,10 @@
+# 下载输出
+B站音频下载/
+*.m4a
+*.mp3
+*.mp4
+*.mkv
+archive.txt
+
+# 系统
+.DS_Store
