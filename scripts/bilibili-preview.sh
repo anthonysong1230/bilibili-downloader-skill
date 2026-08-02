@@ -18,7 +18,7 @@ HOME_DIR="${HOME:-/root}"
 LOGINFILE="$HOME_DIR/.cache/bilibili-login-cookies.txt"
 BUFILE="$HOME_DIR/.cache/bilibili-buvid.txt"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-OUTBASE="/var/minis/workspace/bilibili-preview"
+OUTBASE="${PREVIEW_OUT:-/var/minis/workspace/bilibili-preview}"
 
 # ---------- 提取 BV 号和 p 号 ----------
 BV="$(echo "$INPUT" | grep -oE 'BV[0-9A-Za-z]{10}' | head -1 || true)"
@@ -140,4 +140,8 @@ HTMLEOF
 
 echo ">>> 预览页已生成: $OUTFILE" >&2
 echo ">>> 直链: $PLAYER" >&2
-echo "minis://workspace/bilibili-preview/${BV}_p${P_NUM}.html"
+if [[ "$OUTBASE" == /var/minis/* ]]; then
+    echo "minis://workspace/bilibili-preview/${BV}_p${P_NUM}.html"
+else
+    echo "file://$OUTFILE"
+fi

@@ -1,7 +1,7 @@
 ---
 name: bilibili-audio-dl
-version: 3.8.0
-description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp+官方API直链，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先) + 合集秒下(561P不再卡死)。【🚨最优先·必须先给预览】收到B站链接/BV号/短链后，**第一步必须输出在线预览**：运行 bash <skill_dir>/scripts/bilibili-preview.sh "BVxxx?p=N" 生成预览页（含封面+标题+播放器+分P列表），然后**只给一个链接** `🎬 [预览](minis://workspace/bilibili-preview/BVxxx_pN.html)`（禁止再附第二个https直链——两个超文本手机端会换行错位且部分打不开；禁止用player.bilibili.com/player.html?page=N——302跳转后mbplayer只认p不认page加载错P），**不给预览直接进入询问/下载 = 违反硬性规则**。【强制流程·先问再下载】再调 bilibili-parts.sh 检测分P，**多P必须停下单独发一条消息询问「下载哪个P？(数字/全部/取消)」，等用户回复后才继续，禁止不询问直接下载，禁止与音频/视频问题合并发送**；【必须每次询问·禁止记忆推断】每次收到新视频都必须单独发一条消息询问「1.音频 2.视频+音频」，禁止根据历史记忆/上次选择推断，禁止与选P/画质问题合并发送；用户要视频时必须先调 bilibili-formats.sh 查实际格式（禁止裸调yt-dlp -F会412）再问画质，分辨率也必须每次询问、禁止记忆推断，只问真实存在档位，画质问题也单独发送等回复；收到关键词（如"去B站搜XXX"）先调 bilibili-search.sh 搜索，若被风控拦截则停下提示「要扫码登录后继续吗？1.登录 2.不登录」，用户选1则运行 bilibili-login.sh 登录后重新搜索，选2则请用户提供链接；搜索出多个结果时分步依次询问，严禁合并多个问题到一条消息。【短链p参数不可信】b23.tv短链解析出的p=N是分享停留位置不代表用户要的P，用户给歌名时用 bilibili-findpart.sh(pagelist API+grep)定位分P，勿用yt-dlp flat(标题全NA)。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表且必须附可点击预览链接，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。【播放链接必须可访问】minis://只认/var/minis/下目录，下载产物默认在~/B站音频下载/无法直接播放——给链接前必须cp到/var/minis/shared/bilibili/并用标准minis://shared/...链接，禁止../跨路径拼接。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载、B站搜索。
+version: 4.0.0
+description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp+官方API直链，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先) + 合集秒下(561P不再卡死)。【🚨最优先·必须先给预览】收到B站链接/BV号/短链后，**第一步必须输出在线预览**：运行 bilidown preview "BVxxx?p=N" 生成预览页（含封面+标题+播放器+分P列表），然后**只给一个链接** `🎬 [预览](minis://workspace/bilibili-preview/BVxxx_pN.html)`（禁止再附第二个https直链——两个超文本手机端会换行错位且部分打不开；禁止用player.bilibili.com/player.html?page=N——302跳转后mbplayer只认p不认page加载错P），**不给预览直接进入询问/下载 = 违反硬性规则**。【强制流程·先问再下载】再调 bilidown parts 检测分P，**多P必须停下单独发一条消息询问「下载哪个P？(数字/全部/取消)」，等用户回复后才继续，禁止不询问直接下载，禁止与音频/视频问题合并发送**；【必须每次询问·禁止记忆推断】每次收到新视频都必须单独发一条消息询问「1.音频 2.视频+音频」，禁止根据历史记忆/上次选择推断，禁止与选P/画质问题合并发送；用户要视频时必须先调 bilidown formats 查实际格式（禁止裸调yt-dlp -F会412）再问画质，分辨率也必须每次询问、禁止记忆推断，只问真实存在档位，画质问题也单独发送等回复；收到关键词（如"去B站搜XXX"）先调 bilidown search 搜索，若被风控拦截则停下提示「要扫码登录后继续吗？1.登录 2.不登录」，用户选1则运行 bilidown login 登录后重新搜索，选2则请用户提供链接；搜索出多个结果时分步依次询问，严禁合并多个问题到一条消息。【短链p参数不可信】b23.tv短链解析出的p=N是分享停留位置不代表用户要的P，用户给歌名时用 bilidown find(pagelist API+grep)定位分P，勿用yt-dlp flat(标题全NA)。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表且必须附可点击预览链接，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。【播放链接必须可访问】minis://只认/var/minis/下目录，下载产物默认在~/B站音频下载/无法直接播放——给链接前必须cp到/var/minis/shared/bilibili/并用标准minis://shared/...链接，禁止../跨路径拼接。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载、B站搜索。
 user-invocable: true
 ---
 
@@ -13,9 +13,9 @@ user-invocable: true
 
 ### 规则1：先问再下载（流程）
 收到链接/BV号/短链：
-1. **先提供在线预览页**（含封面+标题+播放器+分P列表，**必须用 `bilibili-preview.sh` 生成**）：
+1. **先提供在线预览页**（含封面+标题+播放器+分P列表，**必须用 `bilidown preview` 生成**）：
 ```bash
-bash <skill_dir>/scripts/bilibili-preview.sh "BVxxx?p=N"
+bilidown preview "BVxxx?p=N"
 ```
 输出后**只给一个链接**（minis:// 预览页即可，里面已含播放器，禁止再附第二个直链——两个超文本在手机端会换行错位且部分打不开）：
 ```
@@ -24,14 +24,14 @@ bash <skill_dir>/scripts/bilibili-preview.sh "BVxxx?p=N"
    - 单P `p=1`；多P `p=N` 对应分P（分P定位正确）
    - 🚫 禁止用 `player.bilibili.com/player.html?page=N`（跳转后 page 被忽略，加载错P）
    - 🚫 **这是第一步必做动作，不做预览直接进询问/下载 = 违反规则**
-2. **检测分P**：调 `bilibili-parts.sh` 看是否多P。**多P时必须停下询问下载哪个P（等用户回复后再继续，禁止直接下载/直接默认P1/跳过询问）**：
+2. **检测分P**：调 `bilidown parts` 看是否多P。**多P时必须停下询问下载哪个P（等用户回复后再继续，禁止直接下载/直接默认P1/跳过询问）**：
 ```
 该视频共 N 个分P:
 P1 [0:54] xxx
 P2 [2:09] xxx
 下载哪个P？(数字/全部/取消)
 ```
-   - 用户给歌名时先用 `bilibili-findpart.sh` 定位到具体P，再问"是 P{定位结果} 吗？下载哪个P？"
+   - 用户给歌名时先用 `bilidown find` 定位到具体P，再问"是 P{定位结果} 吗？下载哪个P？"
    - 🚫 多P没问清就下载 = 违反硬性规则
    - 🚫 **此步必须单独一条消息发送，等用户回复后，才允许发送下一条（音频/视频）询问**——严禁把"选P"和"音频/视频"合并进同一条消息
 3. **必须询问音频/视频**，格式固定为：
@@ -42,7 +42,7 @@ P2 [2:09] xxx
    - 🚫 **禁止**根据历史记忆/上次选择/用户偏好推断用户要音频还是视频——**每次收到新视频都必须重新询问**，用户未明确说"音频/声音/视频/带画面"就一定要问
 
 - 用户回 `1`/音频 → audio 模式
-- 用户回 `2`/视频 → **先用 `bilibili-formats.sh` 查看该视频实际可用格式**（禁止裸调 `yt-dlp -F`，会触发 412），**再**问画质（只问真实存在的档位）：
+- 用户回 `2`/视频 → **先用 `bilidown formats` 查看该视频实际可用格式**（禁止裸调 `yt-dlp -F`，会触发 412），**再**问画质（只问真实存在的档位）：
 
 ```
 该视频最高 480P，确认下载 480P 吗？
@@ -107,15 +107,17 @@ cp "/root/B站音频下载/BVxxx/P121_小草.m4a" /var/minis/shared/bilibili/
 
 ## 🔍 搜索（v3.2.1）
 
+> 💡 **本技能所有命令通过 `bilidown` CLI 执行**（仓库：github.com/menghuanshiguang/bilibili-downloader-cli）。若 bilidown 未安装：`git clone ... && bash install.sh`；或直接用 `<skill_dir>/scripts/` 下同名脚本兜底（参数一致）。
+
 **当用户给的是关键词而非链接**（如"去B站搜《兰花草》下载"），用搜索脚本找 BV 号，再把结果列给用户选，按规则1询问。
 
 ```bash
-bash <skill_dir>/scripts/bilibili-search.sh "<关键词>" [条数]
+bilidown search "<关键词>" [条数]
 ```
 
 ### 搜索登录流程（必须按此执行）
 
-1. 先调 `bilibili-search.sh` 搜索（脚本自动用登录 cookies 或 buvid）。
+1. 先调 `bilidown search` 搜索（脚本自动用登录 cookies 或 buvid）。
 2. **若被风控拦截**（返回"出错啦!"/非 JSON/空结果）→ **停下，向用户提示**：
 
 ```
@@ -124,7 +126,7 @@ bash <skill_dir>/scripts/bilibili-search.sh "<关键词>" [条数]
 2. 不登录（改用链接直接下载）
 ```
 
-3. **用户选 1 登录** → 运行 `bilibili-login.sh` 扫码登录 → 登录成功后再重新搜索。
+3. **用户选 1 登录** → 运行 `bilidown login` 扫码登录 → 登录成功后再重新搜索。
 4. **用户选 2 不登录** → 不再搜索，请用户直接提供视频链接/BV号再下载。
 
 ⚠️ 游客 buvid 搜索**大概率被拦**，不要反复重试（会加重风控）。
@@ -147,7 +149,7 @@ bash <skill_dir>/scripts/bilibili-search.sh "<关键词>" [条数]
 2. 视频+音频
 ```
 
-**第3步（画质）**：用户选了视频后，**先用 `bilibili-formats.sh` 查看该视频实际格式**，再问（只问真实存在的档位）：
+**第3步（画质）**：用户选了视频后，**先用 `bilidown formats` 查看该视频实际格式**，再问（只问真实存在的档位）：
 ```
 该视频最高 1080P，要 1080P 吗？（登录后可用）
 ```
@@ -162,7 +164,7 @@ bash <skill_dir>/scripts/bilibili-search.sh "<关键词>" [条数]
 问画质前**必须**用此脚本查格式（内含完整反爬参数，裸 `yt-dlp -F` 会 412）：
 
 ```bash
-bash <skill_dir>/scripts/bilibili-formats.sh "<URL|BV号>"
+bilidown formats "<URL|BV号>"
 ```
 
 输出：视频格式列表（标 H.264/HEVC）+ 最高分辨率 + H.264 最高档。据此决定询问的档位。
@@ -175,7 +177,7 @@ bash <skill_dir>/scripts/bilibili-formats.sh "<URL|BV号>"
 
 ### 扫码登录
 ```bash
-bash <skill_dir>/scripts/bilibili-login.sh
+bilidown login
 ```
 流程：
 1. 脚本调 B站 API 生成登录二维码
@@ -201,7 +203,7 @@ bash <skill_dir>/scripts/bilibili-login.sh
 ## 调用方式
 
 ```bash
-bash <skill_dir>/scripts/bilibili-dl.sh "<URL|BV号>" <mode> [输出目录] [容器mp4|mkv] [分辨率480|720|1080] [分P号] [截取区间]
+bilidown dl "<URL|BV号>" <mode> [输出目录] [容器mp4|mkv] [分辨率480|720|1080] [分P号] [截取区间]
 ```
 
 | 参数 | 说明 |
@@ -215,24 +217,24 @@ bash <skill_dir>/scripts/bilibili-dl.sh "<URL|BV号>" <mode> [输出目录] [容
 
 ```bash
 # 截取音频片段 1:30-2:45
-bash .../bilibili-dl.sh "BVxxx" audio ~/Downloads mp4 480 1 "1:30-2:45"
+bilidown dl "BVxxx" audio ~/Downloads mp4 480 1 "1:30-2:45"
 # 截取视频片段 90s-165s
-bash .../bilibili-dl.sh "BVxxx" video ~/Downloads mp4 480 1 "90-165"
+bilidown dl "BVxxx" video ~/Downloads mp4 480 1 "90-165"
 ```
 
 ```bash
 # 游客音频
-bash .../bilibili-dl.sh "BV1GJ411x7h7" audio
+bilidown dl "BV1GJ411x7h7" audio
 # 游客视频 mp4
-bash .../bilibili-dl.sh "BVxxx" video
+bilidown dl "BVxxx" video
 # 登录后 1080P 高清
-bash .../bilibili-dl.sh "BVxxx" video ~/Downloads mp4 1080
+bilidown dl "BVxxx" video ~/Downloads mp4 1080
 # 批量下载UP主 720P
-bash .../bilibili-dl.sh "https://space.bilibili.com/123456/video" list 480 720
+bilidown dl "https://space.bilibili.com/123456/video" list 480 720
 # 多P视频下载第2P
-bash .../bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 2
+bilidown dl "BV1GV4y1W7vh" video ~/Downloads mp4 1080 2
 # 多P视频下载全部P
-bash .../bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 all
+bilidown dl "BV1GV4y1W7vh" video ~/Downloads mp4 1080 all
 ```
 
 ## 📺 在线预览（v3.5.4）
@@ -253,7 +255,7 @@ bash .../bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 all
 检测/列出多P视频用：
 
 ```bash
-bash <skill_dir>/scripts/bilibili-parts.sh "<URL|BV号>"
+bilidown parts "<URL|BV号>"
 ```
 
 输出：`分P数: N` + 每P的 `P号 [时长] 标题 (ID)`。单P显示"单P视频(无分P)"。
@@ -263,7 +265,7 @@ bash <skill_dir>/scripts/bilibili-parts.sh "<URL|BV号>"
 **当用户给的短链自带 `p=N` 参数（如 b23.tv 分享链接解析出 p=139）时，该参数是分享时停留位置，不代表用户要的内容**——用户说歌名就以歌名为准，用此脚本在合集中定位：
 
 ```bash
-bash <skill_dir>/scripts/bilibili-findpart.sh "<URL|BV号>" "<关键词>"
+bilidown find "<URL|BV号>" "<关键词>"
 ```
 
 原理：调官方 API `api.bilibili.com/x/player/pagelist` 一次性拉全部分P标题，再 grep 关键词定位。
@@ -276,9 +278,9 @@ bash <skill_dir>/scripts/bilibili-findpart.sh "<URL|BV号>" "<关键词>"
 ### 合集定位示例
 ```bash
 # 用户: "下载《小草》，链接是b23.tv分享的"
-bash .../bilibili-findpart.sh "https://b23.tv/iEGonVr" "小草"
+bash .../bilidown find "https://b23.tv/iEGonVr" "小草"
 # → P121: 小草
-bash .../bilibili-dl.sh "BV16v411L7js" video ~/Downloads mp4 1080 121
+bilidown dl "BV16v411L7js" video ~/Downloads mp4 1080 121
 ```
 
 脚本自动处理：cookies 选择（登录优先）、buvid、请求头、短链解析。
