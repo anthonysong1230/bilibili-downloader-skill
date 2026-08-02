@@ -57,7 +57,7 @@ get_cookies() {
 # ---------- 标准化 URL ----------
 normalize_url() {
     local input="$1"
-    if [[ "$input" =~ ^BV[0-9A-Za-z]{10,}$ ]]; then
+    if [[ "$input" =~ ^BV[0-9A-Za-z]{10,}(\?p=[0-9]+)?$ ]]; then
         echo "https://www.bilibili.com/video/$input"
     elif [[ "$input" =~ b23\.tv ]]; then
         curl -s -o /dev/null --max-redirs 5 -A "$UA" -w "%{url_effective}" -L "$input"
@@ -112,37 +112,74 @@ probe() {  # probe <file> <stream> <field>
         -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | head -1 || true
 }
 
-# ---------- 视频+音频下载并合并 (单P) ----------
+# ---------- 视频+音频下载并合并 (API直链方案, 绕开 yt-dlp 合集遍历卡死) ----------
 download_video() {
     local url="$1" outdir="$2" ck="$3"
     local container="${4:-mp4}" part_num="${5:-}"
-    local p_args=() ptag="p0" title vfile afile out
+    local bv pnum resp cid title vurl aurl vfile afile out
     : > "$outdir/.running"
 
-    if [[ -n "$part_num" ]]; then
-        p_args=(--playlist-items "$part_num")
-        ptag="p${part_num}"
-    fi
+    bv="$(echo "$url" | grep -oE 'BV[0-9A-Za-z]{10}' | head -1 || true)"
+    [[ -z "$bv" ]] && { echo "ERROR: 无法提取BV号: $url" >&2; return 1; }
+    pnum="${part_num:-1}"
 
-    title="$(fetch_title "$url" "$ck" "${p_args[@]}" | head -1 || true)"
-    title="$(safe_name "${title:-video}")"
+    # 1. pagelist: 拿 cid + 标题
+    resp="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/pagelist" \
+        --data-urlencode "bvid=$bv" -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" || true)"
+    cid="$(echo "$resp" | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(2)
+pages=d.get('data') or []
+t=[p for p in pages if p.get('page')==int('$pnum')]
+print(t[0]['cid'] if t else '')
+" 2>/dev/null || true)"
+    [[ -z "$cid" ]] && { echo "ERROR: 获取cid失败(风控或P$pnum不存在)" >&2; return 1; }
+    title="$(echo "$resp" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+pages=d.get('data') or []
+t=[p for p in pages if p.get('page')==int('$pnum')]
+print(t[0]['part'] if t else 'P$pnum')
+" 2>/dev/null || echo "P$pnum")"
+    title="$(safe_name "${title:-P$pnum}")"
 
-    echo ">>> [1/2] ${part_num:+P$part_num }下载视频流 (max ${RES_MAX}p)..."
-    vfile="$(yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
-        -o "$outdir/video_part_${ptag}.%(ext)s" \
-        -f "${RES_EXPR}/b[height<=${RES_MAX}]" \
-        --print "after_move:filepath" \
-        "$url" 2>/dev/null | tail -1 || true)"
+    # 2. playurl: 拿视频+音频直链 (qn=80 最高, fourk=1)
+    local streams
+    streams="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/playurl" \
+        --data-urlencode "bvid=$bv" --data-urlencode "cid=$cid" \
+        --data-urlencode "qn=80" --data-urlencode "fnval=16" --data-urlencode "fourk=1" \
+        -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" \
+        | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(2)
+if d.get('code')!=0: sys.exit(1)
+data=d.get('data') or {}
+dash=data.get('dash') or {}
+vids=dash.get('video') or []
+auds=dash.get('audio') or []
+if not vids or not auds: sys.exit(1)
+# 优先 H.264, 画质<=目标
+target_qn={'480':32,'720':64,'1080':80}.get('$RES_MAX', 80)
+avc=[v for v in vids if str(v.get('codecs','')).startswith('avc')]
+pool=avc or vids
+pool=sorted(pool, key=lambda v:-(v.get('id') or 0))
+best=next((v for v in pool if (v.get('id') or 0)<=target_qn), pool[-1])
+print(best['baseUrl'])
+print(auds[0]['baseUrl'])
+" 2>/dev/null || true)"
+    vurl="$(echo "$streams" | sed -n 1p)"
+    aurl="$(echo "$streams" | sed -n 2p)"
+    [[ -z "$vurl" || -z "$aurl" ]] && { echo "ERROR: 获取视频/音频直链失败(可能需登录或付费)" >&2; return 1; }
+
+    echo ">>> [1/2] ${part_num:+P$part_num }下载视频流 (max ${RES_MAX}p, API直链)..."
+    vfile="$outdir/.video_tmp_${pnum}.m4s"
+    timeout 180 curl -s --max-time 170 -e "https://www.bilibili.com/" -H "User-Agent: $UA" -o "$vfile" "$vurl" || { echo "ERROR: 视频流下载失败" >&2; rm -f "$vfile"; return 1; }
 
     echo ">>> [2/2] ${part_num:+P$part_num }下载音频流..."
-    afile="$(yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
-        -o "$outdir/audio_part_${ptag}.%(ext)s" \
-        -f "ba/b[height<=${RES_MAX}]" \
-        --print "after_move:filepath" \
-        "$url" 2>/dev/null | tail -1 || true)"
-
-    [[ -n "$vfile" && -f "$vfile" ]] || vfile="$(ls -t "$outdir"/video_part_${ptag}.* 2>/dev/null | head -1 || true)"
-    [[ -n "$afile" && -f "$afile" ]] || afile="$(ls -t "$outdir"/audio_part_${ptag}.* 2>/dev/null | head -1 || true)"
+    afile="$outdir/.audio_tmp_${pnum}.m4s"
+    timeout 180 curl -s --max-time 170 -e "https://www.bilibili.com/" -H "User-Agent: $UA" -o "$afile" "$aurl" || { echo "ERROR: 音频流下载失败" >&2; rm -f "$vfile" "$afile"; return 1; }
 
     if [[ -z "$vfile" || -z "$afile" ]]; then
         echo "ERROR: 流下载不完整 video='${vfile:-无}' audio='${afile:-无}'" >&2
@@ -198,13 +235,28 @@ download_video() {
                     if [[ "$has_video" -eq 0 || ! -s "$out" ]]; then
                         echo "    ⚠️ ${H264_ENC} 转码失败(解码器不支持${vcodec}), 尝试重新下载 avc(H.264) 视频流..."
                         rm -f "$out"
-                        local vfile2=""
-                        yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
-                            -o "$outdir/video_part_${ptag}_avc.%(ext)s" \
-                            -f "bv*[vcodec~='^avc'][height<=${RES_MAX}]/b[height<=${RES_MAX}]" \
-                            "$url" 2>&1 | tail -2 || true
-                        vfile2="$(ls -t "$outdir"/video_part_${ptag}_avc.* 2>/dev/null | head -1 || true)"
-                        if [[ -n "$vfile2" ]]; then
+                        local streams2 vurl2 vfile2
+                        streams2="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/playurl" \
+                            --data-urlencode "bvid=$bv" --data-urlencode "cid=$cid" \
+                            --data-urlencode "qn=80" --data-urlencode "fnval=16" --data-urlencode "fourk=1" \
+                            -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" \
+                            | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(2)
+if d.get('code')!=0: sys.exit(1)
+dash=(d.get('data') or {}).get('dash') or {}
+vids=dash.get('video') or []
+auds=dash.get('audio') or []
+if not vids or not auds: sys.exit(1)
+avc=[v for v in vids if str(v.get('codecs','')).startswith('avc')]
+best=avc[0] if avc else vids[0]
+print(best['baseUrl'])
+print(auds[0]['baseUrl'])
+" 2>/dev/null || true)"
+                        vurl2="$(echo "$streams2" | sed -n 1p)"
+                        vfile2="$outdir/.video_tmp_${pnum}_avc.m4s"
+                        if [[ -n "$vurl2" ]] && timeout 180 curl -s --max-time 170 -e "https://www.bilibili.com/" -H "User-Agent: $UA" -o "$vfile2" "$vurl2" 2>/dev/null && [[ -s "$vfile2" ]]; then
                             echo "    ✅ 拿到 avc 流, 直接合并 (免转码)..."
                             "$FFMPEG" -y -i "$vfile2" -i "$afile" \
                                 -map 0:v:0 -map 1:a:0 \
@@ -242,25 +294,63 @@ download_video() {
     fi
 }
 
-# ---------- 音频下载 (单P) ----------
+# ---------- 音频下载 (API直链方案, 绕开 yt-dlp 合集遍历卡死) ----------
 download_audio() {
     local url="$1" outdir="$2" ck="$3" part_num="${4:-}"
-    local p_args=() outpat
-    if [[ -n "$part_num" ]]; then
-        p_args=(--playlist-items "$part_num")
-        outpat="$outdir/P${part_num}_%(title)s.%(ext)s"
-        echo ">>> 下载音频 (P$part_num)..."
-    else
-        outpat="$outdir/%(title)s.%(ext)s"
-        echo ">>> 下载音频..."
+    local bv pnum resp cid title aurl out afile
+    bv="$(echo "$url" | grep -oE 'BV[0-9A-Za-z]{10}' | head -1 || true)"
+    [[ -z "$bv" ]] && { echo "ERROR: 无法提取BV号: $url" >&2; return 1; }
+    pnum="${part_num:-1}"
+
+    # 1. pagelist: 拿 cid + 标题
+    resp="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/pagelist" \
+        --data-urlencode "bvid=$bv" -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" || true)"
+    cid="$(echo "$resp" | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(2)
+pages=d.get('data') or []
+t=[p for p in pages if p.get('page')==int('$pnum')]
+print(t[0]['cid'] if t else '')
+" 2>/dev/null || true)"
+    [[ -z "$cid" ]] && { echo "ERROR: 获取cid失败(风控或P$pnum不存在)" >&2; return 1; }
+    title="$(echo "$resp" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+pages=d.get('data') or []
+t=[p for p in pages if p.get('page')==int('$pnum')]
+print(t[0]['part'] if t else 'P$pnum')
+" 2>/dev/null || echo "P$pnum")"
+    title="$(safe_name "${title:-P$pnum}")"
+
+    # 2. playurl: 拿音频直链
+    aurl="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/playurl" \
+        --data-urlencode "bvid=$bv" --data-urlencode "cid=$cid" \
+        --data-urlencode "qn=16" --data-urlencode "fnval=16" \
+        -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" \
+        | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(2)
+if d.get('code')!=0: sys.exit(1)
+a=(d.get('data') or {}).get('dash',{}).get('audio') or []
+print(a[0]['baseUrl'] if a else '')
+" 2>/dev/null || true)"
+    [[ -z "$aurl" ]] && { echo "ERROR: 获取音频直链失败" >&2; return 1; }
+
+    # 3. 下载 + 转 m4a
+    out="${outdir}/${title}.m4a"
+    [[ -n "$part_num" ]] && out="${outdir}/P${part_num}_${title}.m4a"
+    afile="${outdir}/.audio_tmp_${pnum}.m4s"
+    echo ">>> 下载音频 ${part_num:+P$part_num }(API直链)..."
+    if ! timeout 90 curl -s --max-time 80 -e "https://www.bilibili.com/" -H "User-Agent: $UA" -o "$afile" "$aurl"; then
+        echo "ERROR: 音频流下载失败" >&2; rm -f "$afile"; return 1
     fi
-    local f
-    f="$(yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
-        -o "$outpat" \
-        -f "ba/b[height<=${RES_MAX}]" \
-        --print "after_move:filepath" \
-        "$url" 2>/dev/null | tail -1 || true)"
-    [[ -n "$f" && -f "$f" ]] && note ">>> ✅ 已生成: $(basename "$f") ($(du -h "$f"|cut -f1))"
+    if ! timeout 90 "$FFMPEG" -y -i "$afile" -c copy -movflags +faststart "$out" >/dev/null 2>&1; then
+        echo "ERROR: 音频转 m4a 失败" >&2; rm -f "$afile"; return 1
+    fi
+    rm -f "$afile"
+    note ">>> ✅ 已生成: $(basename "$out") ($(du -h "$out"|cut -f1))"
 }
 
 # ---------- 日志: 关键摘要同时写入文件, 防 tail 截断丢信息 ----------
@@ -280,9 +370,18 @@ note() {  # note <文本...>
 INPUT="$1"
 MODE="${2:-audio}"
 OUTDIR="${3:-$WORK}"
-CONTAINER="${4:-mp4}"
-RES_MAX="${5:-480}"
-PART_NUM="${6:-}"   # 可选: P号 / all / 空=第1P
+# ⚠️ 智能参数解析: 兼容两种调用方式
+#   官方: <URL> <mode> [outdir] [容器mp4|mkv] [分辨率] [分P号]
+#   习惯: <URL> <mode> [outdir] [分辨率] [分P号]   (容器省略, 默认mp4)
+if [[ "$4" == "mp4" || "$4" == "mkv" ]]; then
+    CONTAINER="$4"
+    RES_MAX="${5:-480}"
+    PART_NUM="${6:-}"
+else
+    CONTAINER="mp4"
+    RES_MAX="${4:-480}"
+    PART_NUM="${5:-}"
+fi
 
 URL="$(normalize_url "$INPUT")"
 CK="$(get_cookies)"
