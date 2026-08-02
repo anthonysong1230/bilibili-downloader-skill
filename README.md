@@ -1,6 +1,8 @@
 # 🎵 Bilibili Audio/Video Downloader Skill
 
-> **B站(bilibili) 音视频下载器**，内置 **HTTP 412 反爬规避** + **扫码登录解锁高清** + **官方 API 直链秒下（561P 大合集不再卡死）**。
+> **B站(bilibili) 音视频下载技能**，**v4.0.0 起套壳 [bilidown CLI](https://github.com/menghuanshiguang/bilibili-downloader-cli)**——所有功能通过 `bilidown` 命令执行，本仓库的 `scripts/` 目录保留同名脚本作为兜底（参数一致）。
+
+内置 **HTTP 412 反爬规避** + **扫码登录解锁高清** + **官方 API 直链秒下（561P 大合集不再卡死）** + **片段截取**。
 
 在 iSH / Alpine Linux / 任何类 Unix 环境里，`yt-dlp` 直接下载 B 站视频时很容易遭遇：
 
@@ -8,7 +10,7 @@
 ERROR: [BiliBili] xxx: Unable to download JSON metadata: HTTP Error 412: Precondition Failed
 ```
 
-这是 B 站对「非浏览器 / 游客请求」的风控拦截。本技能把这些绕坑参数**打包成脚本**，你只要给出视频链接 / BV 号 / 歌名，就能下载音频、视频、批量下载整个 UP 主空间。
+这是 B 站对「非浏览器 / 游客请求」的风控拦截。本技能把这些绕坑参数**打包成 CLI**，你只要给出视频链接 / BV 号 / 歌名，就能下载音频、视频、批量下载整个 UP 主空间。
 
 ---
 
@@ -17,8 +19,8 @@ ERROR: [BiliBili] xxx: Unable to download JSON metadata: HTTP Error 412: Precond
 | 环境 | 支持 | 说明 |
 |------|:---:|------|
 | **iSH (iOS)** | ✅ | 本项目的原生开发环境（Alpine Linux on iPhone/iPad） |
-| **Alpine Linux** | ✅ | 原生支持 |
-| **Debian / Ubuntu** | ✅ | 原生支持 |
+| **Android (Termux)** | ✅ | `pkg install bash ffmpeg python curl` + `pip install yt-dlp` |
+| **Alpine / Debian / Ubuntu** | ✅ | 原生支持 |
 | **macOS** | ✅ | 终端直接运行（libx264 编码器可用） |
 | **Windows + WSL** | ✅ | **推荐**：`wsl --install` 后 clone 即用，零改动 |
 | **Windows + Git Bash / MSYS2** | ✅ | 需确保 `yt-dlp`、`ffmpeg`、`python3`、`curl` 在 PATH 中 |
@@ -41,27 +43,83 @@ ERROR: [BiliBili] xxx: Unable to download JSON metadata: HTTP Error 412: Precond
 
 ---
 
+## 🚀 安装 bilidown CLI
+
+```bash
+git clone https://github.com/menghuanshiguang/bilibili-downloader-cli.git
+cd bilibili-downloader-cli
+bash install.sh          # 软链到 /usr/local/bin/bilidown
+bilidown --version       # 验证
+```
+
+> 不想装 CLI？直接用本仓库 `scripts/` 下同名脚本，参数一致：
+> `bash scripts/bilibili-dl.sh "BV1GJ411x7h7" audio`
+
+---
+
+## 📖 用法（bilidown）
+
+```
+bilidown dl <URL|BV号> [audio|video|list] [输出目录] [容器] [分辨率] [分P号] [截取区间]
+```
+
+| 子命令 | 说明 |
+|--------|------|
+| `dl` (download/d) | 下载音频/视频/批量 |
+| `search` (s) | 搜索视频：`bilidown search <关键词> [条数]` |
+| `login` (l) | 扫码登录解锁 720P/1080P 高清 |
+| `formats` (fmt) | 查询可用格式/最高分辨率 |
+| `parts` (p) | 查询分P列表（561P 秒出） |
+| `find` (f) | 按关键词定位合集分P |
+| `preview` (v) | 生成预览页（封面+标题+播放） |
+
+### dl 参数详解
+
+| 参数 | 说明 |
+|------|------|
+| `<URL或BV号>` | 视频链接 / 短链 / BV号 / 空间链接 / UID |
+| `audio`(默认) | 只下载音频 |
+| `video` | 下载视频并合并 |
+| `list` | 批量下载作品集合 / 空间 |
+| `[输出目录]` | 可选，默认 `~/B站音频下载/`，相对路径自动转绝对 |
+| `[容器]` | 仅 video，`mp4`(默认) / `mkv`，可省略 |
+| `[分辨率]` | 默认 `480`；`720`/`1080` 需登录，可省略 |
+| `[分P号]` | 多P视频：P号 / `all` 全部 / 空=第1P，可省略 |
+| `[截取区间]` | 可选，片段截取，格式 `开始-结束`（如 `1:30-2:45` / `90-165`）；不支持 `all` |
+
+> 参数可省略：`bilidown dl "BVxxx"` 即可下载默认配置（音频、480P、第1P）。
+
+### 快速示例
+
+```bash
+# 下载音频
+bilidown dl "BV1GJ411x7h7" audio
+# 1080P 视频
+bilidown dl "BV1GJ411x7h7" video ~/Downloads mp4 1080
+# 多P第2P
+bilidown dl "BV1GV4y1W7vh" video ~/Downloads mp4 1080 2
+# 截取片段 1:30-2:45
+bilidown dl "BV1GJ411x7h7" audio ~/Downloads mp4 480 1 "1:30-2:45"
+# 搜索
+bilidown search "卓依婷 萍聚"
+# 561P合集中按歌名定位
+bilidown find "BV16v411L7js" "小草"
+```
+
+---
+
 ## 🔑 扫码登录（解锁 720P+/1080P 高清、充电/会员内容）
 
 游客模式只能下载 **360P/480P**。要高清画质，需登录你的 B站账号：
 
 ```bash
-bash scripts/bilibili-login.sh
+bilidown login
 ```
 
 1. 脚本调用 B站官方 API 生成**登录二维码**
 2. 生成一个 HTML 页面（`~/bilibili-login-qr.html`），在浏览器打开
 3. 用 **B站 App** 扫码确认
 4. 成功后 cookies 自动保存，后续下载自动启用高清格式
-
-然后指定分辨率下载即可：
-
-```bash
-# 登录后下载 1080P 高清
-bash scripts/bilibili-dl.sh "https://www.bilibili.com/video/BVxxx" video ~/Downloads mp4 1080
-# 720P
-bash scripts/bilibili-dl.sh "BVxxx" video 480 720
-```
 
 > ⚠️ 充电/会员视频**仅在你已购买且有权限时**才能下载，脚本不绕过付费墙。
 > cookies 有效期约 1 个月，过期重跑登录脚本即可。
@@ -74,86 +132,11 @@ bash scripts/bilibili-dl.sh "BVxxx" video 480 720
 - ⚡ **官方 API 直链下载**：pagelist + playurl API 拿直链，**561P 大合集 2 秒内定位分P**，不再被 yt-dlp 遍历播放列表卡死
 - 🎵 **音频模式**：只提取音频（AAC/m4a），最快
 - 🎬 **视频模式**：视频+音频合并，**自动转 H.264 保证不黑屏**（AV1 自动规避）
+- ✂️ **片段截取**：`-ss/-t` 流复制，下载即截取不浪费带宽
 - 🔑 **扫码登录**：解锁 **720P/1080P 高清**、充电/会员内容
 - 📚 **多P支持**：指定分P下载（`P号` / `all` 全部），按歌名在合集中定位分P
 - 🧩 **智能输入**：支持完整 URL、`b23.tv` 短链、纯 BV 号、`BVxxx?p=N`、UP 主 UID / 空间链接
-- 🧠 **智能参数解析**：`[容器] [分辨率] [分P号]` 可省略，只传链接也能跑
-
----
-
-## 🚀 快速开始
-
-### 1. 获取脚本
-
-```bash
-git clone https://github.com/menghuanshiguang/bilibili-downloader-skill.git
-cd bilibili-downloader-skill
-chmod +x scripts/*.sh
-```
-
-### 2. 下载单个视频的音频（只需链接）
-
-```bash
-bash scripts/bilibili-dl.sh "BV1GJ411x7h7" audio
-# 或
-bash scripts/bilibili-dl.sh "https://www.bilibili.com/video/BV1GJ411x7h7"
-```
-
-### 3. 下载视频（含画面）
-
-```bash
-bash scripts/bilibili-dl.sh "BV1GJ411x7h7" video
-```
-
-### 4. 多P视频指定分P / 全部
-
-```bash
-# 下载第2P
-bash scripts/bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 2
-# 下载全部分P
-bash scripts/bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 all
-```
-
-### 5. 截取片段下载（音频/视频）
-
-```bash
-# 截取音频片段 1:30-2:45
-bash scripts/bilibili-dl.sh "BV1GJ411x7h7" audio ~/Downloads mp4 480 1 "1:30-2:45"
-# 截取视频片段 90s-165s
-bash scripts/bilibili-dl.sh "BV1GJ411x7h7" video ~/Downloads mp4 480 1 "90-165"
-```
-
-> 截取区间格式：`开始-结束`，支持 `分:秒`（`1:30-2:45`）或 `纯秒`（`90-165`）。⚠️ 不支持 `all` 模式。
-
-### 6. 批量下载整个 UP 主空间
-
-```bash
-bash scripts/bilibili-dl.sh "https://space.bilibili.com/3546568888159133/video" list
-# 或直接给 UID
-bash scripts/bilibili-dl.sh "3546568888159133" list
-```
-
----
-
-## 📖 用法
-
-```
-bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器] [分辨率] [分P号] [截取区间]
-```
-
-| 参数 | 说明 |
-|------|------|
-| `<URL或BV号>` | 视频链接 / 短链 / BV号 / 空间链接 / UID |
-| `audio`(默认) | 只下载音频 |
-| `video` | 下载视频并合并 |
-| `list` | 批量下载作品集合 / 空间 |
-| `[输出目录]` | 可选，默认 `~/B站音频下载/` |
-| `[容器]` | 仅 video，`mp4`(默认) / `mkv`，可省略 |
-| `[分辨率]` | 默认 `480`；`720`/`1080` 需登录，可省略 |
-| `[分P号]` | 多P视频：P号 / `all` 全部 / 空=第1P，可省略 |
-| `[截取区间]` | 可选，片段截取，格式 `开始-结束`（如 `1:30-2:45` / `90-165`）；不支持 `all` |
-
-> 参数可省略：`bilibili-dl.sh "BVxxx"` 即可下载默认配置（音频、480P、第1P）。
+- 🧠 **智能参数解析**：`[容器] [分辨率] [分P号] [截取区间]` 可省略，只传链接也能跑
 
 ---
 
@@ -176,16 +159,20 @@ yt-dlp \
 
 ---
 
-## 📁 配套脚本
+## 📁 仓库结构
 
-| 脚本 | 用途 |
+- **本仓库**（skill）：`SKILL.md` 交互流程 + `scripts/` 兜底脚本 + `references/` 文档
+- **[bilibili-downloader-cli](https://github.com/menghuanshiguang/bilibili-downloader-cli)**（CLI 主仓库）：`bin/bilidown` 统一入口 + `lib/` 功能实现 + `install.sh` 安装
+
+| scripts/ 文件 | 对应 CLI 命令 |
 |------|------|
-| `bilibili-dl.sh` | 主下载脚本（音频/视频/list） |
-| `bilibili-login.sh` | 扫码登录获取 cookies |
-| `bilibili-search.sh` | 搜索 B 站视频（带 cookies 防风控） |
-| `bilibili-formats.sh` | 查询视频可用格式/最高分辨率（纯 API 秒出） |
-| `bilibili-parts.sh` | 查询分P列表（纯 API 秒出，561P 不卡） |
-| `bilibili-findpart.sh` | 按歌名在合集中定位分P（pagelist API + grep） |
+| `bilibili-dl.sh` | `bilidown dl` |
+| `bilibili-login.sh` | `bilidown login` |
+| `bilibili-search.sh` | `bilidown search` |
+| `bilibili-formats.sh` | `bilidown formats` |
+| `bilibili-parts.sh` | `bilidown parts` |
+| `bilibili-findpart.sh` | `bilidown find` |
+| `bilibili-preview.sh` | `bilidown preview` |
 
 ---
 
@@ -194,7 +181,8 @@ yt-dlp \
 1. **游客模式分辨率限制**：免费游客只能下载 **360P / 480P**。720P+ / 1080P 高清需登录态 cookie。
 2. **版权声明**：请仅下载你有权访问的内容，不绕过会员付费墙、不破解会员专享。
 3. **风控友好**：批量模式已内置随机间隔，仍请勿高频调用。
-4. **短链 p 参数不可信**：b23.tv 短链分享参数 `p=N` 是分享时停留位置，不代表目标分P；合集找歌请用 `bilibili-findpart.sh`。
+4. **短链 p 参数不可信**：b23.tv 短链分享参数 `p=N` 是分享时停留位置，不代表目标分P；合集找歌请用 `bilidown find`。
+5. **Minis 播放链接**：minis:// 只认 `/var/minis/` 下目录，下载产物默认在 `~/B站音频下载/` 无法直接播放——给链接前先 `cp` 到 `/var/minis/shared/bilibili/`。
 
 ---
 
