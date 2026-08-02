@@ -109,30 +109,50 @@ download_video() {
             # mkv 容器原样复制(保留源编码)
             "$FFMPEG" -y -i "$vfile" -i "$afile" -c copy "$out" 2>&1 | tail -3
             ;;
-        *) # mp4 -- 兼容优先: 非 h264 自动转码(若环境支持)
+        *) # mp4 -- 兼容优先: 非 h264 自动转码(用环境可用的任一编码器)
             if [[ "$vcodec" == h264 || "$vcodec" == *avc* ]]; then
                 # 已是 H264: 直接复制
                 "$FFMPEG" -y -i "$vfile" -i "$afile" \
                     -map 0:v:0 -map 1:a:0 \
                     -c:v copy -c:a copy -movflags +faststart \
                     "$out" 2>&1 | tail -3
-            elif "$FFMPEG" -hide_banner -encoders 2>&1 | grep -q libx264; then
-                # 环境支持 libx264: 转码保证兼容
-                echo "    ⚠️ 视频流是 ${vcodec}(HEVC/AV1), 用 libx264 转码..."
-                "$FFMPEG" -y -i "$vfile" -i "$afile" \
-                    -map 0:v:0 -map 1:a:0 \
-                    -c:v libx264 -preset fast -crf 26 -maxrate 1000k -bufsize 2000k \
-                    -c:a aac -b:a 96k \
-                    -movflags +faststart \
-                    "$out" 2>&1 | tail -3
             else
-                # 无 libx264: 原样复制但提示兼容风险
-                echo "    ⚠️ 环境无 libx264, 原样复制 ${vcodec} 流(部分设备可能黑屏)。"
-                echo "      建议: 在 macOS 用 'brew install ffmpeg' 获得完整编码器。"
-                "$FFMPEG" -y -i "$vfile" -i "$afile" \
-                    -map 0:v:0 -map 1:a:0 \
-                    -c:v copy -c:a copy -movflags +faststart \
-                    "$out" 2>&1 | tail -3
+                # 需要转码. 选编码器: libx264 > h264_videotoolbox
+                local H264_ENC=""
+                local ENCODERS
+                ENCODERS="$("$FFMPEG" -hide_banner -encoders 2>/dev/null)"
+                if [[ "$ENCODERS" == *libx264* ]]; then
+                    H264_ENC=libx264
+                elif [[ "$ENCODERS" == *h264_videotoolbox* ]]; then
+                    H264_ENC=h264_videotoolbox
+                fi
+
+                if [[ -n "$H264_ENC" ]]; then
+                    echo "    ⚠️ 视频流是 ${vcodec}(HEVC/AV1), 用 ${H264_ENC} 转码为 H.264..."
+                    if [[ "$H264_ENC" == "libx264" ]]; then
+                        "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                            -map 0:v:0 -map 1:a:0 \
+                            -c:v libx264 -preset fast -crf 26 -maxrate 1000k -bufsize 2000k \
+                            -c:a aac -b:a 96k \
+                            -movflags +faststart \
+                            "$out" 2>&1 | tail -3
+                    else
+                        "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                            -map 0:v:0 -map 1:a:0 \
+                            -c:v h264_videotoolbox -b:v 900k \
+                            -c:a aac -b:a 96k \
+                            -movflags +faststart \
+                            "$out" 2>&1 | tail -3
+                    fi
+                else
+                    # 无任何 H.264 编码器: 原样复制但提示
+                    echo "    ⚠️ 环境无 H264 编码器, 原样复制 ${vcodec} 流(部分设备可能黑屏)。"
+                    echo "      建议安装完整 ffmpeg (macOS: brew install ffmpeg / Linux: apt install ffmpeg)。"
+                    "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                        -map 0:v:0 -map 1:a:0 \
+                        -c:v copy -c:a copy -movflags +faststart \
+                        "$out" 2>&1 | tail -3
+                fi
             fi
             ;;
     esac
