@@ -32,15 +32,15 @@ GEN=$(curl -s "https://passport.bilibili.com/x/passport-login/web/qrcode/generat
     -A "$UA" -e "https://www.bilibili.com/" -H "Referer:https://www.bilibili.com/")
 
 QRC_KEY=$(echo "$GEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['qrcode_key'])" 2>/dev/null)
+QR_URL=$(echo "$GEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['url'])" 2>/dev/null)
 [[ -z "$QRC_KEY" ]] && { echo "❌ 获取二维码失败"; exit 1; }
 
-# ---------- 2. 生成二维码 HTML ----------
-QR_URL="https://passport.bilibili.com/h5-pc/login/scan?qrcode_key=${QRC_KEY}"
+# ---------- 2. 生成二维码 HTML (用官方 data.url, 确保扫码可识别) ----------
 echo ">>> 生成二维码页面: $QR_HTML"
 
-python3 - "$QRC_KEY" "$QR_HTML" <<'EOF'
+python3 - "$QR_URL" "$QR_HTML" <<'EOF'
 import qrcode, io, base64, sys
-url = "https://passport.bilibili.com/h5-pc/login/scan?qrcode_key=" + sys.argv[1]
+url = sys.argv[1]   # 官方 data.url, 保证扫码可识别
 img = qrcode.make(url)
 buf = io.BytesIO()
 img.save(buf, format='PNG')
@@ -71,42 +71,61 @@ echo "    终端: 打开 $QR_HTML"
 echo "    应用内: 用浏览器打开下面HTML文件"
 [ -f "$QR_HTML" ] && echo "    ✅ 二维码页面已生成: $QR_HTML"
 
-# ---------- 3. 轮询登录状态 ----------
+# ---------- 3. 轮询登录状态 (用 GET 请求, B站 poll 不接受 POST) ----------
 echo ""
 echo ">>> 等待扫码确认 (最长120秒)..."
 POLL_URL="https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
-COOKIES=""
+CODE="-1"
+CROSS_URL=""
+TICKET=""
+: > /tmp/bb_login_ck.txt
 for i in $(seq 1 24); do
     sleep 5
-    RES=$(curl -s -c /tmp/bb_login_ck.txt -b /tmp/bb_login_ck.txt \
-        "$POLL_URL" \
-        -A "$UA" \
+    # 重要: GET 请求 (curl -G), 不要用 POST
+    RES=$(curl -s -G \
+        -c /tmp/bb_login_ck.txt -b /tmp/bb_login_ck.txt \
+        -H "User-Agent: $UA" \
+        -H "Referer: https://www.bilibili.com/" \
+        -H "Origin: https://www.bilibili.com" \
         --data-urlencode "qrcode_key=$QRC_KEY" \
-        -e "https://www.bilibili.com/" -H "Referer:https://www.bilibili.com/")
+        "$POLL_URL")
     
-    CODE=$(echo "$RES" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['code'])" 2>/dev/null || echo "-1")
+    CODE=$(echo "$RES" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('code'))" 2>/dev/null || echo "-1")
     case "$CODE" in
-        0)   echo ">>> ✅ 扫码确认，正在获取登录状态..."; break ;;
+        0)   echo ">>> ✅ 扫码确认！正在获取登录态..."; break ;;
         86038) echo ">>> 二维码已失效，请重新运行登录脚本" >&2; exit 1 ;;
-        86090) echo ">>> 已扫码，等待确认...($i)"; continue ;;
+        86090) echo ">>> 已扫码，等待确认...($i) 请在手机上点确认"; continue ;;
         *)   echo ">>> 等待扫码...($i)" ;;
     esac
 done
 
-# ---------- 4. 获取并保存 cookies ----------
+# ---------- 4. 通过 crossDomain 获取 SESSDATA 并保存 cookies ----------
 if [[ "$CODE" == "0" ]]; then
-    # cookies 已在 /tmp/bb_login_ck.txt (含 SESSDATA)
-    if [[ -s /tmp/bb_login_ck.txt ]]; then
+    echo ">>> 完成扫码确认，跳转兑换 cookies..."
+    CROSS_URL=$(echo "$RES" | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    print(d['data'].get('url',''))
+except: print('')")
+    if [[ -n "$CROSS_URL" ]]; then
+        echo ">>> 访问 crossDomain 获取 SESSDATA..."
+        curl -s -L -o /dev/null \
+            -c /tmp/bb_login_ck.txt -b /tmp/bb_login_ck.txt \
+            -H "User-Agent: $UA" \
+            -H "Referer: https://www.bilibili.com/" \
+            "$CROSS_URL"
+    fi
+    if grep -q "SESSDATA" /tmp/bb_login_ck.txt 2>/dev/null; then
         cp /tmp/bb_login_ck.txt "$COOKIE_FILE"
         chmod 600 "$COOKIE_FILE"
         echo ""
-        echo "✅ 登录成功！"
-        echo "   cookies 已保存到: $COOKIE_FILE"
-        echo ""
-        echo "  现在可用 bilibili-dl.sh 下载高清视频 (720P+/1080P)"
-        echo "  脚本会自动读取登录 cookies"
+        echo "✅ 登录成功！cookies 已保存: $COOKIE_FILE"
+        echo "  现在可用 bilibili-dl.sh 下载高清 (720P+/1080P)"
     else
-        echo "❌ 未获取到 cookies" >&2; exit 1
+        echo "❌ 未获取到 SESSDATA cookie" >&2
+        cat /tmp/bb_login_ck.txt 2>&1
+        exit 1
     fi
 else
     echo "❌ 登录超时或失败" >&2; exit 1
