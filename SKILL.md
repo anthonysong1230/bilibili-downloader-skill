@@ -1,7 +1,7 @@
 ---
 name: bilibili-audio-dl
-version: 3.2.0
-description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先)。【强制流程】收到B站链接必须先用「1. 音频 2. 视频+音频」询问用户要什么，用户未明确时禁止直接下载；用户要视频且可能高清内容时再问「要 480P 还是 720P/1080P？」。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载。
+version: 3.2.1
+description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先)。【强制流程】收到B站链接必须先用「1. 音频 2. 视频+音频」询问用户要什么，用户未明确时禁止直接下载；用户要视频且可能高清内容时再问「要 480P 还是 720P/1080P？」；收到关键词（如"去B站搜XXX"）先调 bilibili-search.sh 搜索列出结果让用户选。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载、B站搜索。
 user-invocable: true
 ---
 
@@ -50,6 +50,17 @@ user-invocable: true
 | 短链接 | `https://b23.tv/xxx` | audio / video |
 | BV号 | `BV1GJ411x7h7` | audio / video |
 | UP主空间 | `https://space.bilibili.com/123456` 或纯 UID | list |
+| 搜索关键词 | `卓依婷 萍聚`、`Beyond 岁月无声`（用户说"去B站搜XXX下载"） | 先搜索 → 再 audio/video |
+
+## 🔍 搜索（v3.2.1）
+
+**当用户给的是关键词而非链接**（如"去B站搜《兰花草》下载"），用搜索脚本找 BV 号，再把结果列给用户选，按规则1询问。
+
+```bash
+bash <skill_dir>/scripts/bilibili-search.sh "<关键词>" [条数]
+```
+
+⚠️ **必须带 cookies**：B站搜索 API 无 cookies 会返回风控页（aba.bilibili.com"出错啦!"）。脚本自动用登录 cookies（优先）或 buvid（游客），**未登录时游客搜索可能仍被拦**——遇到风控页先引导登录 `bilibili-login.sh`。
 
 ## 🔑 登录（解锁高清/充电视频）
 
