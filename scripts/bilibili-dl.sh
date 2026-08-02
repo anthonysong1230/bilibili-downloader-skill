@@ -73,27 +73,35 @@ safe_name() {
 # ---------- 读取标题 ----------
 fetch_title() {
     local url="$1" ck="$2"
-    yt-dlp "${ARGS[@]}" --cookies "$ck" --skip-download --print "%(title)s" "$url" 2>/dev/null
+    shift 2
+    local extra=("$@")
+    yt-dlp "${ARGS[@]}" --cookies "$ck" "${extra[@]}" --skip-download --print "%(title)s" "$url" 2>/dev/null
 }
 
 # ---------- 视频+音频下载并合并 ----------
 download_video() {
     local url="$1" outdir="$2" ck="$3"
+    local part_num="${5:-}"
+    local p_args=()
     local title vfile afile out
     : > "$outdir/.running"
 
-    title="$(fetch_title "$url" "$ck" | head -1 || true)"
+    if [[ -n "$part_num" && "$part_num" != "all" ]]; then
+        p_args=(--playlist-items "$part_num")
+    fi
+
+    title="$(fetch_title "$url" "$ck" "${p_args[@]}" | head -1 || true)"
     title="$(safe_name "${title:-video}")"
     echo ">>> 标题: $title"
 
     echo ">>> [1/2] 下载视频流 (max ${RES_MAX}p)..."
-    yt-dlp "${ARGS[@]}" --cookies "$ck" \
+    yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
         -o "$outdir/video_part.%(ext)s" \
         -f "${RES_EXPR}/b[height<=${RES_MAX}]" \
         "$url"
 
     echo ">>> [2/2] 下载音频流..."
-    yt-dlp "${ARGS[@]}" --cookies "$ck" \
+    yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
         -o "$outdir/audio_part.%(ext)s" \
         -f "ba/b[height<=${RES_MAX}]" \
         "$url"
@@ -108,6 +116,9 @@ download_video() {
 
     local container="${4:-mp4}"
     out="${outdir}/${title}.${container}"
+    if [[ -n "$part_num" && "$part_num" != "all" ]]; then
+        out="${outdir}/P${part_num}_${title}.${container}"
+    fi
     echo ">>> 合并 → $title.$container"
     echo "    视频: $(basename "$vfile") ($(du -h "$vfile"|cut -f1))"
     echo "    音频: $(basename "$afile") ($(du -h "$afile"|cut -f1))"
@@ -194,7 +205,7 @@ download_video() {
 
 # ---------- 主逻辑 ----------
 [[ $# -lt 1 ]] && {
-    echo "用法: bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv] [分辨率480|720|1080]" >&2
+    echo "用法: bilibili-dl.sh <URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv] [分辨率480|720|1080] [分P号]" >&2
     echo "提示: 720P+ 需先登录 → 运行 bilibili-login.sh" >&2
     exit 1
 }
@@ -204,6 +215,7 @@ MODE="${2:-audio}"
 OUTDIR="${3:-$WORK}"
 CONTAINER="${4:-mp4}"
 RES_MAX="${5:-480}"
+PART_NUM="${6:-}"   # 可选: 多P视频指定P号, 空=第1P; all=全部分P
 
 URL="$(normalize_url "$INPUT")"
 CK="$(get_cookies)"
@@ -212,9 +224,16 @@ echo " B站下载 | 模式: $MODE"
 echo " 目标  : $URL"
 echo " 输出  : $OUTDIR"
 echo " 分辨率: ${RES_MAX}p"
+[[ -n "$PART_NUM" ]] && echo " 分P   : $PART_NUM"
 echo "============================================"
 
 mkdir -p "$OUTDIR"
+
+# 分P参数: 指定P号时附加 --playlist-items
+PLAYLIST_ARGS=()
+if [[ -n "$PART_NUM" && "$PART_NUM" != "all" ]]; then
+    PLAYLIST_ARGS=(--playlist-items "$PART_NUM")
+fi
 
 # 公共参数数组
 ARGS=(
@@ -228,13 +247,13 @@ ARGS=(
 case "$MODE" in
     audio|a)
         echo ">>> 下载音频..."
-        yt-dlp "${ARGS[@]}" --cookies "$CK" \
-            -o "$OUTDIR/%(title)s.%(ext)s" \
+        yt-dlp "${ARGS[@]}" --cookies "$CK" "${PLAYLIST_ARGS[@]}" \
+            -o "$OUTDIR/%(playlist_index)s_%(title)s.%(ext)s" \
             -f "ba/b[height<=${RES_MAX}]" \
             "$URL"
         ;;
     video|v)
-        download_video "$URL" "$OUTDIR" "$CK" "$CONTAINER"
+        download_video "$URL" "$OUTDIR" "$CK" "$CONTAINER" "$PART_NUM"
         ;;
     list|l)
         [[ "$URL" =~ space\.bilibili\.com ]] || {

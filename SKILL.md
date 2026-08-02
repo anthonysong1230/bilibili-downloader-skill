@@ -1,7 +1,7 @@
 ---
 name: bilibili-audio-dl
-version: 3.3.2
-description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先)。【强制流程·一次只问一个问题】收到B站链接必须先用「1. 音频 2. 视频+音频」询问用户要什么，用户未明确时禁止直接下载；用户要视频时必须先调 bilibili-formats.sh 查实际格式（禁止裸调 yt-dlp -F 会412，禁止跳过查询直接下载，查格式失败时停下提示登录或稍后重试）再问画质，只问真实存在档位；收到关键词（如"去B站搜XXX"）先调 bilibili-search.sh 搜索，若被风控拦截则停下提示「要扫码登录后继续吗？1.登录 2.不登录」，用户选1则运行 bilibili-login.sh 登录后重新搜索，选2则请用户提供链接；搜索出多个结果时分三步依次询问（先选版本→等回复→再问音频/视频→等回复→再查格式问画质），严禁合并多个问题到一条消息。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表且必须附可点击预览链接，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载、B站搜索。
+version: 3.4.0
+description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先)。【强制流程·一次只问一个问题】收到B站链接先给在线预览链接(https://www.bilibili.com/video/BVxxx)再调 bilibili-parts.sh 检测分P，多P先问「下载哪个P？(数字/全部/取消)」等回复，再问「1.音频 2.视频+音频」，用户未明确时禁止直接下载；用户要视频时必须先调 bilibili-formats.sh 查实际格式（禁止裸调 yt-dlp -F 会412，禁止跳过查询直接下载，查格式失败时停下提示登录或稍后重试）再问画质，只问真实存在档位；收到关键词（如"去B站搜XXX"）先调 bilibili-search.sh 搜索，若被风控拦截则停下提示「要扫码登录后继续吗？1.登录 2.不登录」，用户选1则运行 bilibili-login.sh 登录后重新搜索，选2则请用户提供链接；搜索出多个结果时分步依次询问（先选版本→等回复→再问音频/视频→等回复→再查格式问画质），严禁合并多个问题到一条消息。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表且必须附可点击预览链接，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载、B站搜索。
 user-invocable: true
 ---
 
@@ -12,8 +12,19 @@ user-invocable: true
 ## 🚨 硬性规则（违反即失败，LLM 必须照做）
 
 ### 规则1：先问再下载（流程）
-收到链接/BV号/短链，**必须先询问**，格式固定为：
-
+收到链接/BV号/短链：
+1. **先提供在线预览链接**（用户可点开 B站 看内容再决定）：
+```
+在线预览: https://www.bilibili.com/video/BVxxx
+```
+2. **检测分P**：调 `bilibili-parts.sh` 看是否多P。多P时先问下载哪P（等回复后再继续）：
+```
+该视频共 N 个分P:
+P1 [0:54] xxx
+P2 [2:09] xxx
+下载哪个P？(数字/全部/取消)
+```
+3. 再问音频/视频，格式固定为：
 ```
 1. 音频
 2. 视频+音频
@@ -157,7 +168,7 @@ bash <skill_dir>/scripts/bilibili-login.sh
 ## 调用方式
 
 ```bash
-bash <skill_dir>/scripts/bilibili-dl.sh "<URL|BV号>" <mode> [输出目录] [容器mp4|mkv] [分辨率480|720|1080]
+bash <skill_dir>/scripts/bilibili-dl.sh "<URL|BV号>" <mode> [输出目录] [容器mp4|mkv] [分辨率480|720|1080] [分P号]
 ```
 
 | 参数 | 说明 |
@@ -166,6 +177,7 @@ bash <skill_dir>/scripts/bilibili-dl.sh "<URL|BV号>" <mode> [输出目录] [容
 | `[输出目录]` | 可选，默认 `~/B站音频下载/` |
 | `[容器]` | 仅 video，`mp4`(默认) / `mkv` |
 | `[分辨率]` | 默认 `480`；`720`/`1080` 需登录 |
+| `[分P号]` | 多P视频指定P号（如 `2` 下第2P）；`all` 下全部分P；空=第1P |
 
 ```bash
 # 游客音频
@@ -176,7 +188,31 @@ bash .../bilibili-dl.sh "BVxxx" video
 bash .../bilibili-dl.sh "BVxxx" video ~/Downloads mp4 1080
 # 批量下载UP主 720P
 bash .../bilibili-dl.sh "https://space.bilibili.com/123456/video" list 480 720
+# 多P视频下载第2P
+bash .../bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 2
+# 多P视频下载全部P
+bash .../bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 all
 ```
+
+## 📺 在线预览（v3.4.0）
+
+下载前**必须**先给用户在线预览链接（B站播放页），用户确认内容后再进入询问流程：
+
+```
+在线预览: https://www.bilibili.com/video/BVxxx
+```
+
+若用户预览后想换视频，重新搜索或让用户给新链接。
+
+## 📑 分P查询（v3.4.0）
+
+检测/列出多P视频用：
+
+```bash
+bash <skill_dir>/scripts/bilibili-parts.sh "<URL|BV号>"
+```
+
+输出：`分P数: N` + 每P的 `P号 [时长] 标题 (ID)`。单P显示"单P视频(无分P)"。
 
 脚本自动处理：cookies 选择（登录优先）、buvid、请求头、短链解析。
 
