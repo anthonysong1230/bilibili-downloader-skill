@@ -47,7 +47,7 @@ RAW="$(yt-dlp \
     --extractor-args "bilibili:player_client=web" \
     --cookies "$CK" \
     --skip-download --print "%(playlist_index)s|%(title)s|%(id)s|%(duration)s" \
-    "$URL" 2>&1)"
+    "$URL" 2>&1 || true)"
 
 if echo "$RAW" | grep -qiE "412|HTTP Error|Unable to download"; then
     echo "ERROR: 查询被风控拦截(412)。不要反复重试; 若未登录先运行 bilibili-login.sh 登录后再查。" >&2

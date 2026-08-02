@@ -49,7 +49,7 @@ RAW="$(yt-dlp \
     --add-header "Origin:https://www.bilibili.com" \
     --extractor-args "bilibili:player_client=web" \
     --cookies "$CK" \
-    --no-warnings -F "$URL" 2>&1)"
+    --no-warnings -F "$URL" 2>&1 || true)"
 
 # 412/风控检测
 if echo "$RAW" | grep -qiE "412|HTTP Error|Unable to download|requested format"; then

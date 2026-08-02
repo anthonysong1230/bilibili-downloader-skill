@@ -4,14 +4,18 @@
 # 基于 yt-dlp，内置 B站反爬(412)规避参数 + buvid cookie 自动获取
 #
 # 用法:
-#   bilibili-dl.sh <视频URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv] [最高分辨率]
+#   bilibili-dl.sh <视频URL|BV号> [audio|video|list] [输出目录] [容器mp4|mkv] [最高分辨率] [分P号]
 #
 # 模式: audio(默认,只要音频) | video(视频+音频合并) | list(批量UP主)
 # 分辨率: 480(默认游客) | 720 | 1080  (720+ 需登录, 见 bilibili-login.sh)
+# 分P:   P号(如 2) 只下第2P; all 逐P下载全部; 空=第1P
 #
-# video 模式说明:
-#   分两次下载视频流和音频流(避免一次多格式触发 yt-dlp 自动 merge 崩溃),
-#   再用独立 ffmpeg 手动合并。规避 iSH 环境 yt-dlp 后处理的 bug。
+# v3.5.0 修复:
+#   - all 模式改为逐P循环下载, 每P独立临时文件(不再互相覆盖)
+#   - 编码检测改用 ffprobe (修复诊断编码为空bug)
+#   - 默认目录下按 BV 号建子文件夹(不再混文件)
+#   - 合并后校验实际分辨率, 低于请求时提示源文件限制
+#   - 每P完成打印摘要, 全程日志写入 <输出目录>/download.log
 # =====================================================================
 set -euo pipefail
 
@@ -19,13 +23,13 @@ set -euo pipefail
 WORK="${HOME:-/root}/B站音频下载"
 YTDLP="$(command -v yt-dlp)"
 FFMPEG="$(command -v ffmpeg)"
+FFPROBE="$(command -v ffprobe)"
 BUFILE="${HOME:-/root}/.cache/bilibili-buvid.txt"
 LOGINFILE="${HOME:-/root}/.cache/bilibili-login-cookies.txt"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 mkdir -p "$WORK" "${HOME:-/root}/.cache"
 
 # ---------- 分辨率映射 ----------
-# 480=游客, 720=登录级, 1080=登录级
 # ⚠️ AV1 规避: 优先选 H.264(avc1) 编码, 否则 iSH 精简 ffmpeg 无法解码 AV1 会转码失败
 RES_MAX="${5:-480}"
 case "$RES_MAX" in
@@ -40,7 +44,6 @@ get_cookies() {
         ck="$LOGINFILE"
         echo ">>> 使用登录 cookies (高清可用)" >&2
     else
-        # 生成 buvid (若没有)
         if [[ ! -s "$BUFILE" ]]; then
             echo ">>> 获取 buvid cookie..." >&2
             curl -s -c "$BUFILE" -A "$UA" "https://www.bilibili.com/" -o /dev/null
@@ -78,54 +81,84 @@ fetch_title() {
     yt-dlp "${ARGS[@]}" --cookies "$ck" "${extra[@]}" --skip-download --print "%(title)s" "$url" 2>/dev/null
 }
 
-# ---------- 视频+音频下载并合并 ----------
+# ---------- 获取分P数 (all 模式用) ----------
+get_part_count() {
+    local url="$1"
+    local n
+    n="$(yt-dlp "${ARGS[@]}" --cookies "$CK" --skip-download --print "%(playlist_count)s" "$url" 2>/dev/null | grep -E '^[0-9]+$' | head -1 || true)"
+    echo "${n:-1}"
+}
+
+# ---------- 循环下载全部P, 单P失败不中断 ----------
+download_all_parts() {
+    local url="$1" outdir="$2" ck="$3" mode="$4" container="$5"
+    local n i rc=0
+    n="$(get_part_count "$url")"
+    echo ">>> 共 $n 个分P, 逐P下载..."
+    for i in $(seq 1 "$n"); do
+        echo "----- P$i/$n -----"
+        if [[ "$mode" == "video" ]]; then
+            download_video "$url" "$outdir" "$ck" "$container" "$i" || { echo "⚠️ P$i 失败, 继续下一P"; rc=1; }
+        else
+            download_audio "$url" "$outdir" "$ck" "$i" || { echo "⚠️ P$i 失败, 继续下一P"; rc=1; }
+        fi
+    done
+    return $rc
+}
+
+# ---------- 用 ffprobe 读流属性 ----------
+probe() {  # probe <file> <stream> <field>
+    "$FFPROBE" -v error -select_streams "$2" -show_entries "stream=$3" \
+        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | head -1 || true
+}
+
+# ---------- 视频+音频下载并合并 (单P) ----------
 download_video() {
     local url="$1" outdir="$2" ck="$3"
-    local part_num="${5:-}"
-    local p_args=()
-    local title vfile afile out
+    local container="${4:-mp4}" part_num="${5:-}"
+    local p_args=() ptag="p0" title vfile afile out
     : > "$outdir/.running"
 
-    if [[ -n "$part_num" && "$part_num" != "all" ]]; then
+    if [[ -n "$part_num" ]]; then
         p_args=(--playlist-items "$part_num")
+        ptag="p${part_num}"
     fi
 
     title="$(fetch_title "$url" "$ck" "${p_args[@]}" | head -1 || true)"
     title="$(safe_name "${title:-video}")"
-    echo ">>> 标题: $title"
 
-    echo ">>> [1/2] 下载视频流 (max ${RES_MAX}p)..."
-    yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
-        -o "$outdir/video_part.%(ext)s" \
+    echo ">>> [1/2] ${part_num:+P$part_num }下载视频流 (max ${RES_MAX}p)..."
+    vfile="$(yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
+        -o "$outdir/video_part_${ptag}.%(ext)s" \
         -f "${RES_EXPR}/b[height<=${RES_MAX}]" \
-        "$url"
+        --print "after_move:filepath" \
+        "$url" 2>/dev/null | tail -1 || true)"
 
-    echo ">>> [2/2] 下载音频流..."
-    yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
-        -o "$outdir/audio_part.%(ext)s" \
+    echo ">>> [2/2] ${part_num:+P$part_num }下载音频流..."
+    afile="$(yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
+        -o "$outdir/audio_part_${ptag}.%(ext)s" \
         -f "ba/b[height<=${RES_MAX}]" \
-        "$url"
+        --print "after_move:filepath" \
+        "$url" 2>/dev/null | tail -1 || true)"
 
-    vfile="$(ls -t "$outdir"/video_part.* 2>/dev/null | head -1)"
-    afile="$(ls -t "$outdir"/audio_part.* 2>/dev/null | head -1)"
+    [[ -n "$vfile" && -f "$vfile" ]] || vfile="$(ls -t "$outdir"/video_part_${ptag}.* 2>/dev/null | head -1 || true)"
+    [[ -n "$afile" && -f "$afile" ]] || afile="$(ls -t "$outdir"/audio_part_${ptag}.* 2>/dev/null | head -1 || true)"
 
     if [[ -z "$vfile" || -z "$afile" ]]; then
         echo "ERROR: 流下载不完整 video='${vfile:-无}' audio='${afile:-无}'" >&2
         return 1
     fi
 
-    local container="${4:-mp4}"
     out="${outdir}/${title}.${container}"
-    if [[ -n "$part_num" && "$part_num" != "all" ]]; then
-        out="${outdir}/P${part_num}_${title}.${container}"
-    fi
-    echo ">>> 合并 → $title.$container"
+    [[ -n "$part_num" ]] && out="${outdir}/P${part_num}_${title}.${container}"
+
+    echo ">>> 合并 → $(basename "$out")"
     echo "    视频: $(basename "$vfile") ($(du -h "$vfile"|cut -f1))"
     echo "    音频: $(basename "$afile") ($(du -h "$afile"|cut -f1))"
 
-    # 检测视频流编码
-    local vcodec="unknown"
-    vcodec="$( "$FFMPEG" -i "$vfile" 2>&1 | grep -oaE 'Video: [a-z0-9_]+' | head -1 | sed 's/Video: //' || true )"
+    # 编码检测 (ffprobe, 稳定可靠)
+    local vcodec="$(probe "$vfile" v:0 codec_name)"
+    vcodec="${vcodec:-unknown}"
     echo "    诊断: 视频流编码=${vcodec}"
 
     case "$container" in
@@ -161,16 +194,16 @@ download_video() {
                     fi
                     # 验证转码结果: 必须同时有视频+音频流, 否则回退
                     local has_video
-                    has_video="$("$FFMPEG" -i "$out" 2>&1 | grep -c 'Video:')"
+                    has_video="$("$FFMPEG" -i "$out" 2>&1 | grep -c 'Video:' || true)"
                     if [[ "$has_video" -eq 0 || ! -s "$out" ]]; then
                         echo "    ⚠️ ${H264_ENC} 转码失败(解码器不支持${vcodec}), 尝试重新下载 avc(H.264) 视频流..."
                         rm -f "$out"
                         local vfile2=""
-                        yt-dlp "${ARGS[@]}" --cookies "$ck" \
-                            -o "$outdir/video_part_avc.%(ext)s" \
+                        yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
+                            -o "$outdir/video_part_${ptag}_avc.%(ext)s" \
                             -f "bv*[vcodec~='^avc'][height<=${RES_MAX}]/b[height<=${RES_MAX}]" \
                             "$url" 2>&1 | tail -2 || true
-                        vfile2="$(ls -t "$outdir"/video_part_avc.* 2>/dev/null | head -1 || true)"
+                        vfile2="$(ls -t "$outdir"/video_part_${ptag}_avc.* 2>/dev/null | head -1 || true)"
                         if [[ -n "$vfile2" ]]; then
                             echo "    ✅ 拿到 avc 流, 直接合并 (免转码)..."
                             "$FFMPEG" -y -i "$vfile2" -i "$afile" \
@@ -197,10 +230,44 @@ download_video() {
 
     rm -f "$vfile" "$afile" "$outdir/.running"
     if [[ -f "$out" ]]; then
-        echo ">>> ✅ 已生成: $out ($(du -h "$out"|cut -f1))"
+        local sz="$(du -h "$out"|cut -f1)"
+        local actual_h="$(probe "$out" v:0 height)"
+        note ">>> ✅ ${part_num:+P$part_num }已生成: $(basename "$out") ($sz)${actual_h:+ [${actual_h}p]}"
+        if [[ -n "$actual_h" && "${RES_MAX}" =~ ^[0-9]+$ && "$actual_h" -lt "$RES_MAX" ]]; then
+            note "    ⚠️ 源文件最高仅 ${actual_h}p (低于请求的 ${RES_MAX}p), 已下载最高可用。"
+        fi
     else
-        echo ">>> ⚠️ 合并产物不存在" >&2; return 1
+        note ">>> ⚠️ 合并产物不存在"
+        return 1
     fi
+}
+
+# ---------- 音频下载 (单P) ----------
+download_audio() {
+    local url="$1" outdir="$2" ck="$3" part_num="${4:-}"
+    local p_args=() outpat
+    if [[ -n "$part_num" ]]; then
+        p_args=(--playlist-items "$part_num")
+        outpat="$outdir/P${part_num}_%(title)s.%(ext)s"
+        echo ">>> 下载音频 (P$part_num)..."
+    else
+        outpat="$outdir/%(title)s.%(ext)s"
+        echo ">>> 下载音频..."
+    fi
+    local f
+    f="$(yt-dlp "${ARGS[@]}" --cookies "$ck" "${p_args[@]}" \
+        -o "$outpat" \
+        -f "ba/b[height<=${RES_MAX}]" \
+        --print "after_move:filepath" \
+        "$url" 2>/dev/null | tail -1 || true)"
+    [[ -n "$f" && -f "$f" ]] && note ">>> ✅ 已生成: $(basename "$f") ($(du -h "$f"|cut -f1))"
+}
+
+# ---------- 日志: 关键摘要同时写入文件, 防 tail 截断丢信息 ----------
+note() {  # note <文本...>
+    local msg="$*"
+    echo "$msg"
+    [[ -n "${LOG:-}" ]] && echo "$msg" >> "$LOG" || true
 }
 
 # ---------- 主逻辑 ----------
@@ -215,25 +282,30 @@ MODE="${2:-audio}"
 OUTDIR="${3:-$WORK}"
 CONTAINER="${4:-mp4}"
 RES_MAX="${5:-480}"
-PART_NUM="${6:-}"   # 可选: 多P视频指定P号, 空=第1P; all=全部分P
+PART_NUM="${6:-}"   # 可选: P号 / all / 空=第1P
 
 URL="$(normalize_url "$INPUT")"
 CK="$(get_cookies)"
+
+# 默认目录下按 BV 号建子文件夹, 避免混文件
+BV_ID="$(echo "$URL" | grep -oE 'BV[0-9A-Za-z]{10}' | head -1 || true)"
+FINAL_OUT="$OUTDIR"
+if [[ "$OUTDIR" == "$WORK"* && -n "$BV_ID" ]]; then
+    FINAL_OUT="$OUTDIR/$BV_ID"
+fi
+mkdir -p "$FINAL_OUT"
+
+# 日志文件: 全量记录, 防 tail 截断丢信息
+LOG="$FINAL_OUT/download.log"
+: > "$LOG"
+
 echo "============================================"
 echo " B站下载 | 模式: $MODE"
 echo " 目标  : $URL"
-echo " 输出  : $OUTDIR"
+echo " 输出  : $FINAL_OUT"
 echo " 分辨率: ${RES_MAX}p"
 [[ -n "$PART_NUM" ]] && echo " 分P   : $PART_NUM"
 echo "============================================"
-
-mkdir -p "$OUTDIR"
-
-# 分P参数: 指定P号时附加 --playlist-items
-PLAYLIST_ARGS=()
-if [[ -n "$PART_NUM" && "$PART_NUM" != "all" ]]; then
-    PLAYLIST_ARGS=(--playlist-items "$PART_NUM")
-fi
 
 # 公共参数数组
 ARGS=(
@@ -242,18 +314,23 @@ ARGS=(
     --add-header "Origin:https://www.bilibili.com"
     --extractor-args "bilibili:player_client=web"
     --retries 8 --fragment-retries 8 --no-mtime
+    --force-overwrites
 )
 
 case "$MODE" in
     audio|a)
-        echo ">>> 下载音频..."
-        yt-dlp "${ARGS[@]}" --cookies "$CK" "${PLAYLIST_ARGS[@]}" \
-            -o "$OUTDIR/%(playlist_index)s_%(title)s.%(ext)s" \
-            -f "ba/b[height<=${RES_MAX}]" \
-            "$URL"
+        if [[ "$PART_NUM" == "all" ]]; then
+            download_all_parts "$URL" "$FINAL_OUT" "$CK" "audio" ""
+        else
+            download_audio "$URL" "$FINAL_OUT" "$CK" "$PART_NUM"
+        fi
         ;;
     video|v)
-        download_video "$URL" "$OUTDIR" "$CK" "$CONTAINER" "$PART_NUM"
+        if [[ "$PART_NUM" == "all" ]]; then
+            download_all_parts "$URL" "$FINAL_OUT" "$CK" "video" "$CONTAINER"
+        else
+            download_video "$URL" "$FINAL_OUT" "$CK" "$CONTAINER" "$PART_NUM"
+        fi
         ;;
     list|l)
         [[ "$URL" =~ space\.bilibili\.com ]] || {
@@ -261,9 +338,9 @@ case "$MODE" in
         }
         echo ">>> 批量下载 UP主视频 > ${RES_MAX}p..."
         yt-dlp "${ARGS[@]}" --cookies "$CK" \
-            -o "$OUTDIR/%(title)s.%(ext)s" \
+            -o "$FINAL_OUT/%(title)s.%(ext)s" \
             -f "ba/b[height<=${RES_MAX}]" \
-            --download-archive "$OUTDIR/archive.txt" \
+            --download-archive "$FINAL_OUT/archive.txt" \
             --sleep-interval 3 --max-sleep-interval 6 \
             --concurrent-fragments 8 \
             "$URL"
@@ -275,6 +352,7 @@ esac
 
 echo ""
 echo "============================================"
-echo " ✅ 完成！文件在: $OUTDIR"
+echo " ✅ 完成！产物清单:"
 echo "============================================"
-ls -lh "$OUTDIR" | tail -10
+ls -lh "$FINAL_OUT" | grep -vE "download\.log|\.running" | tee -a "$LOG" | tail -20
+echo "完整日志: $LOG"
