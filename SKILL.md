@@ -1,7 +1,7 @@
 ---
 name: bilibili-audio-dl
-version: 3.5.2
-description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先)。【强制流程·一次只问一个问题】收到B站链接先给在线预览链接——单P用直链 player.bilibili.com/player.html?bvid=BVxxx&page=1，多P禁止用player.html?page=N(移动端跳mbplayer丢page参数加载整个合集)、必须用详情页 www.bilibili.com/video/BVxxx?p=N(分P定位正确)——再调 bilibili-parts.sh 检测分P，多P先问「下载哪个P？(数字/全部/取消)」等回复，再问「1.音频 2.视频+音频」，用户未明确时禁止直接下载；用户要视频时必须先调 bilibili-formats.sh 查实际格式（禁止裸调 yt-dlp -F 会412，禁止跳过查询直接下载，查格式失败时停下提示登录或稍后重试）再问画质，只问真实存在档位；收到关键词（如"去B站搜XXX"）先调 bilibili-search.sh 搜索，若被风控拦截则停下提示「要扫码登录后继续吗？1.登录 2.不登录」，用户选1则运行 bilibili-login.sh 登录后重新搜索，选2则请用户提供链接；搜索出多个结果时分步依次询问（先选版本→等回复→再问音频/视频→等回复→再查格式问画质），严禁合并多个问题到一条消息。【短链p参数不可信】b23.tv短链解析出的p=N是分享停留位置不代表用户要的P，用户给歌名时用 bilibili-findpart.sh(pagelist API+grep)定位分P，勿用yt-dlp flat(标题全NA)勿用player.html分P验证(bug)；预览显示异常时以findpart API和?p=N下载为准。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表且必须附可点击预览链接，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载、B站搜索。
+version: 3.5.3
+description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先)。【强制流程·一次只问一个问题】收到B站链接先给在线预览直链 www.bilibili.com/blackboard/webplayer/mbplayer.html?bvid=BVxxx&p=N（单P p=1，多P p=N 分P定位正确；🚫禁止用 player.bilibili.com/player.html?page=N——302跳转mbplayer后只认p不认page、page被忽略加载错P）再调 bilibili-parts.sh 检测分P，多P先问「下载哪个P？(数字/全部/取消)」等回复，再问「1.音频 2.视频+音频」，用户未明确时禁止直接下载；用户要视频时必须先调 bilibili-formats.sh 查实际格式（禁止裸调 yt-dlp -F 会412，禁止跳过查询直接下载，查格式失败时停下提示登录或稍后重试）再问画质，只问真实存在档位；收到关键词（如"去B站搜XXX"）先调 bilibili-search.sh 搜索，若被风控拦截则停下提示「要扫码登录后继续吗？1.登录 2.不登录」，用户选1则运行 bilibili-login.sh 登录后重新搜索，选2则请用户提供链接；搜索出多个结果时分步依次询问（先选版本→等回复→再问音频/视频→等回复→再查格式问画质），严禁合并多个问题到一条消息。【短链p参数不可信】b23.tv短链解析出的p=N是分享停留位置不代表用户要的P，用户给歌名时用 bilibili-findpart.sh(pagelist API+grep)定位分P，勿用yt-dlp flat(标题全NA)。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表且必须附可点击预览链接，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载、B站搜索。
 user-invocable: true
 ---
 
@@ -13,9 +13,12 @@ user-invocable: true
 
 ### 规则1：先问再下载（流程）
 收到链接/BV号/短链：
-1. **先提供在线预览链接**：
-   - 单P：直链 `https://player.bilibili.com/player.html?bvid=BVxxx&page=1`（直接播放）
-   - 多P：**禁止用 player.html?page=N**（移动端跳 mbplayer 丢 page 参数、加载整个合集），用详情页 `https://www.bilibili.com/video/BVxxx?p=N`（分P定位正确）
+1. **先提供在线预览直链**（B站 mbplayer 嵌入式播放器，直接播放，不跳转页面）：
+```
+在线预览: https://www.bilibili.com/blackboard/webplayer/mbplayer.html?bvid=BVxxx&p=N
+```
+   - 单P `p=1`；多P `p=N` 对应分P（分P定位正确）
+   - 🚫 禁止用 `player.bilibili.com/player.html?page=N`（跳转后 page 被忽略，加载错P）
 2. **检测分P**：调 `bilibili-parts.sh` 看是否多P。多P时先问下载哪P（等回复后再继续）：
 ```
 该视频共 N 个分P:
@@ -193,19 +196,17 @@ bash .../bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 2
 bash .../bilibili-dl.sh "BV1GV4y1W7vh" video ~/Downloads mp4 1080 all
 ```
 
-## 📺 在线预览（v3.5.2）
+## 📺 在线预览（v3.5.3）
 
-下载前**必须**先给用户在线预览链接：
+下载前**必须**先给用户在线预览**直链**（B站移动端嵌入式播放器 mbplayer，点开直接播放视频，不跳转B站页面）：
 
-- **单P视频** → 直链（B站嵌入式播放器，点开直接播放，不跳转页面）：
 ```
-在线预览: https://player.bilibili.com/player.html?bvid=BVxxx&page=1
+在线预览: https://www.bilibili.com/blackboard/webplayer/mbplayer.html?bvid=BVxxx&p=N
 ```
-- **多P视频** → 🚫 **禁止**用 `player.html?page=N`（分P定位有 bug：移动端 302 跳转 mbplayer 后**丢弃 page 参数**，加载整个合集显示总时长，无法落到单个分P）。多P必须用详情页分P定位（该入口实测正确）：
-```
-在线预览: https://www.bilibili.com/video/BVxxx?p=N
-```
-- **预览不可信时以 API/下载为准**：预览页面显示异常（总时长/合集播放量）不代表分P数据错——`bilibili-findpart.sh`(pagelist API) 和 `?p=N` 下载才是确定性的验证方式。
+
+- 单P视频：`p=1`
+- 多P视频：`p=N` 对应第N个分P，**分P定位正确**（实测 P353 → 加载对应 cid=331867867《谢谢你的爱》）
+- 🚫 **禁止**用 `player.bilibili.com/player.html?bvid=...&page=N`——它 302 跳转 mbplayer 后保留 `page` 参数，而 **mbplayer 只认 `p` 不认 `page`**，page 被忽略导致加载错P（实测加载成 P1）
 - 若用户预览后想换视频，重新搜索或让用户给新链接。
 
 ## 📑 分P查询（v3.4.0）
