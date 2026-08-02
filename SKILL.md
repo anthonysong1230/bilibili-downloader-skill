@@ -1,7 +1,7 @@
 ---
 name: bilibili-audio-dl
 version: 3.5.9
-description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp+官方API直链，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先) + 合集秒下(561P不再卡死)。【强制流程·先问再下载】收到B站链接先给在线预览直链（必须完整URL带https://协议头+完整域名，格式 https://www.bilibili.com/blackboard/webplayer/mbplayer.html?bvid=BVxxx&p=N，单P p=1，多P p=N；🚫禁止用player.bilibili.com/player.html?page=N——302跳转后mbplayer只认p不认page加载错P）再调 bilibili-parts.sh 检测分P，多P先问「下载哪个P？(数字/全部/取消)」等回复；【必须每次询问·禁止记忆推断】每次收到新视频都必须询问「1.音频 2.视频+音频」，禁止根据历史记忆/上次选择推断；用户要视频时必须先调 bilibili-formats.sh 查实际格式（禁止裸调yt-dlp -F会412）再问画质，分辨率也必须每次询问、禁止记忆推断，只问真实存在档位；收到关键词（如"去B站搜XXX"）先调 bilibili-search.sh 搜索，若被风控拦截则停下提示「要扫码登录后继续吗？1.登录 2.不登录」，用户选1则运行 bilibili-login.sh 登录后重新搜索，选2则请用户提供链接；搜索出多个结果时分步依次询问，严禁合并多个问题到一条消息。【短链p参数不可信】b23.tv短链解析出的p=N是分享停留位置不代表用户要的P，用户给歌名时用 bilibili-findpart.sh(pagelist API+grep)定位分P，勿用yt-dlp flat(标题全NA)。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表且必须附可点击预览链接，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。【播放链接必须可访问】minis://只认/var/minis/下目录，下载产物默认在~/B站音频下载/无法直接播放——给链接前必须cp到/var/minis/shared/bilibili/并用标准minis://shared/...链接，禁止../跨路径拼接。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载、B站搜索。
+description: 下载 B站(bilibili)视频的音频或视频到本地。基于 yt-dlp+官方API直链，内置 B站反爬(HTTP 412)规避方案 + 扫码登录高清解锁 + AV1自动规避(H.264优先) + 合集秒下(561P不再卡死)。【强制流程·先问再下载】收到B站链接先给在线预览直链（必须完整URL带https://协议头+完整域名，格式 https://www.bilibili.com/blackboard/webplayer/mbplayer.html?bvid=BVxxx&p=N，单P p=1，多P p=N；🚫禁止用player.bilibili.com/player.html?page=N——302跳转后mbplayer只认p不认page加载错P）再调 bilibili-parts.sh 检测分P，**多P必须停下询问「下载哪个P？(数字/全部/取消)」等用户回复后才继续，禁止不询问直接下载**；【必须每次询问·禁止记忆推断】每次收到新视频都必须询问「1.音频 2.视频+音频」，禁止根据历史记忆/上次选择推断；用户要视频时必须先调 bilibili-formats.sh 查实际格式（禁止裸调yt-dlp -F会412）再问画质，分辨率也必须每次询问、禁止记忆推断，只问真实存在档位；收到关键词（如"去B站搜XXX"）先调 bilibili-search.sh 搜索，若被风控拦截则停下提示「要扫码登录后继续吗？1.登录 2.不登录」，用户选1则运行 bilibili-login.sh 登录后重新搜索，选2则请用户提供链接；搜索出多个结果时分步依次询问，严禁合并多个问题到一条消息。【短链p参数不可信】b23.tv短链解析出的p=N是分享停留位置不代表用户要的P，用户给歌名时用 bilibili-findpart.sh(pagelist API+grep)定位分P，勿用yt-dlp flat(标题全NA)。【强制格式】所有询问和输出必须简洁：询问只列短选项，输出只给「标题+类型+大小+链接」紧凑列表且必须附可点击预览链接，禁止贴日志/长解释/客套话，每屏最多1-2个emoji。【播放链接必须可访问】minis://只认/var/minis/下目录，下载产物默认在~/B站音频下载/无法直接播放——给链接前必须cp到/var/minis/shared/bilibili/并用标准minis://shared/...链接，禁止../跨路径拼接。触发词：B站下载、bilibili下载、下载B站、B站音频、下视频、下UP主、B站登录、高清下载、B站搜索。
 user-invocable: true
 ---
 
@@ -19,13 +19,15 @@ user-invocable: true
 ```
    - 单P `p=1`；多P `p=N` 对应分P（分P定位正确）
    - 🚫 禁止用 `player.bilibili.com/player.html?page=N`（跳转后 page 被忽略，加载错P）
-2. **检测分P**：调 `bilibili-parts.sh` 看是否多P。多P时先问下载哪P（等回复后再继续）：
+2. **检测分P**：调 `bilibili-parts.sh` 看是否多P。**多P时必须停下询问下载哪个P（等用户回复后再继续，禁止直接下载/直接默认P1/跳过询问）**：
 ```
 该视频共 N 个分P:
 P1 [0:54] xxx
 P2 [2:09] xxx
 下载哪个P？(数字/全部/取消)
 ```
+   - 用户给歌名时先用 `bilibili-findpart.sh` 定位到具体P，再问"是 P{定位结果} 吗？下载哪个P？"
+   - 🚫 多P没问清就下载 = 违反硬性规则
 3. **必须询问音频/视频**，格式固定为：
 ```
 1. 音频

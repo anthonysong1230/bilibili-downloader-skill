@@ -370,17 +370,23 @@ note() {  # note <文本...>
 INPUT="$1"
 MODE="${2:-audio}"
 OUTDIR="${3:-$WORK}"
-# ⚠️ 智能参数解析: 兼容两种调用方式
+# ⚠️ 智能参数解析: 兼容三种调用方式
 #   官方: <URL> <mode> [outdir] [容器mp4|mkv] [分辨率] [分P号]
 #   习惯: <URL> <mode> [outdir] [分辨率] [分P号]   (容器省略, 默认mp4)
+#   占位: <URL> <mode> [outdir] "" [分辨率] [分P号] (容器传空串)
 if [[ "$4" == "mp4" || "$4" == "mkv" ]]; then
     CONTAINER="$4"
     RES_MAX="${5:-480}"
     PART_NUM="${6:-}"
-else
+elif [[ "$4" =~ ^[0-9]+$ ]]; then
     CONTAINER="mp4"
-    RES_MAX="${4:-480}"
+    RES_MAX="$4"
     PART_NUM="${5:-}"
+else
+    # $4 为空或未知 → 视为容器占位, 按官方格式解析
+    CONTAINER="mp4"
+    RES_MAX="${5:-480}"
+    PART_NUM="${6:-}"
 fi
 
 URL="$(normalize_url "$INPUT")"
