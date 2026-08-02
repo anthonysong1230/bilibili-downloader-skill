@@ -67,8 +67,8 @@ download_video() {
     local title vfile afile out
     : > "$outdir/.running"
 
-    # 1) 获取干净标题
-    title="$(fetch_title "$url" | head -1)"
+    # 1) 获取干净标题(失败不中断)
+    title="$(fetch_title "$url" | head -1 || true)"
     title="$(safe_name "${title:-video}")"
     echo ">>> 标题: $title"
 
@@ -99,14 +99,41 @@ download_video() {
     echo "    视频: $(basename "$vfile") ($(du -h "$vfile"|cut -f1))"
     echo "    音频: $(basename "$afile") ($(du -h "$afile"|cut -f1))"
 
+    # 检测视频流编码(容错: 失败时设为 unknown, 不中断脚本)
+    local vcodec="unknown"
+    vcodec="$( "$FFMPEG" -i "$vfile" 2>&1 | grep -oaE 'Video: [a-z0-9_]+' | head -1 | sed 's/Video: //' || true )"
+    echo "    诊断: 视频流编码=${vcodec}"
+
     case "$container" in
         mkv)
+            # mkv 容器原样复制(保留源编码)
             "$FFMPEG" -y -i "$vfile" -i "$afile" -c copy "$out" 2>&1 | tail -3
             ;;
-        *) # mp4
-            "$FFMPEG" -y -i "$vfile" -i "$afile" \
-                -c:v copy -c:a copy -movflags +faststart \
-                "$out" 2>&1 | tail -3
+        *) # mp4 -- 兼容优先: 非 h264 自动转码(若环境支持)
+            if [[ "$vcodec" == h264 || "$vcodec" == *avc* ]]; then
+                # 已是 H264: 直接复制
+                "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                    -map 0:v:0 -map 1:a:0 \
+                    -c:v copy -c:a copy -movflags +faststart \
+                    "$out" 2>&1 | tail -3
+            elif "$FFMPEG" -hide_banner -encoders 2>&1 | grep -q libx264; then
+                # 环境支持 libx264: 转码保证兼容
+                echo "    ⚠️ 视频流是 ${vcodec}(HEVC/AV1), 用 libx264 转码..."
+                "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                    -map 0:v:0 -map 1:a:0 \
+                    -c:v libx264 -preset fast -crf 26 -maxrate 1000k -bufsize 2000k \
+                    -c:a aac -b:a 96k \
+                    -movflags +faststart \
+                    "$out" 2>&1 | tail -3
+            else
+                # 无 libx264: 原样复制但提示兼容风险
+                echo "    ⚠️ 环境无 libx264, 原样复制 ${vcodec} 流(部分设备可能黑屏)。"
+                echo "      建议: 在 macOS 用 'brew install ffmpeg' 获得完整编码器。"
+                "$FFMPEG" -y -i "$vfile" -i "$afile" \
+                    -map 0:v:0 -map 1:a:0 \
+                    -c:v copy -c:a copy -movflags +faststart \
+                    "$out" 2>&1 | tail -3
+            fi
             ;;
     esac
 
