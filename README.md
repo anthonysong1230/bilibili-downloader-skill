@@ -64,8 +64,8 @@ bash scripts/bilibili-dl.sh "BVxxx" video 480 720
 ### 1. 获取脚本
 
 ```bash
-git clone https://github.com/menghuanshiguang/bilibili-audio-dl.git
-cd bilibili-audio-dl
+git clone https://github.com/menghuanshiguang/bilibili-audio-dl-skill.git
+cd bilibili-audio-dl-skill
 chmod +x scripts/bilibili-dl.sh   # 可能需要
 ```
 
